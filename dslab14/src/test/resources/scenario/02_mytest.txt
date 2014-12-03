@@ -1,0 +1,43 @@
+*	CloudController	controller
+*	Client			alice
+*	Node			node1
+*	Node			node2
+*	Node			node3
+*	Node			node4
+
+alice:		!login alice 12345
+>			verify("success")
+
+alice:		!credits
+>			verify("500")
+
+alice:		!buy 100
+>			verify("600")
+
+alice:		!compute 5 + -2
+>			verify("3")
+
+alice:		!compute 55 + 5
+>			verify("60")
+
+alice:		!compute 2 * 3
+>			verify("6")
+
+alice:		!compute 515 / 5
+>			verify("103")
+
+alice:		!compute 210 - 110
+>			verify("100")
+
+alice:		!credits
+>			verify("350")
+
+controller:	!users
+>			verify(".*alice.*350.*bill.*500", T(test.util.Flag).REGEX)
+
+controller: !exit
+alice:		!exit
+node1:		!exit
+node2:		!exit
+node3:		!exit
+node4:		!exit
