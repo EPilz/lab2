@@ -13,6 +13,7 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
 import java.net.UnknownHostException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -23,6 +24,7 @@ import java.util.concurrent.Executors;
 
 import org.apache.commons.logging.LogFactory;
 
+import controller.info.NodeInfo;
 import util.Config;
 import cli.Command;
 import cli.Shell;
@@ -39,6 +41,8 @@ public class Node implements INodeCli, Runnable {
 
 	private ExecutorService pool;
 	private boolean stop = true;
+	
+	private int rmin;
 	
 	private static ThreadLocal<SimpleDateFormat> dateFormater = new ThreadLocal<SimpleDateFormat>() {
 	 
@@ -64,13 +68,15 @@ public class Node implements INodeCli, Runnable {
 		this.componentName = componentName;
 		this.config = config;
 	
-		this.pool = Executors.newFixedThreadPool(config.getInt("thread.pool"));
+		this.pool = Executors.newCachedThreadPool();
+		
+		this.rmin = config.getInt("node.rmin");
 		
 		this.logDir = System.getProperty("user.dir") + File.separator + config.getString("log.dir") + File.separator;
 		createDir();	
 		
 		shell = new Shell(componentName, userRequestStream, userResponseStream);
-		shell.register(this);
+		shell.register(this);		
 	}
 	
 	private void createDir() {
@@ -82,16 +88,21 @@ public class Node implements INodeCli, Runnable {
 
 	@Override
 	public void run() {
+		new Thread(shell).start();	
+		
 		try {
 			shell.writeLine("Node: " + componentName + " is up! Enter command.");
 		} catch (IOException e2) {  }
 		
+		//Method for Two-Phase Commit
+        twoPhaseCommit();
+            			
 		TimerTask action = new TimerTask() {				
             public void run() {
-            	DatagramSocket socket = null;
+            	DatagramSocket socketAlive = null;
             	
             	try {
-	            	socket = new DatagramSocket();
+	            	socketAlive = new DatagramSocket();
 	        		String message = "!alive " + config.getInt("tcp.port") + " " + config.getString("node.operators");
 	        		byte[] buffer = message.getBytes();
         	
@@ -99,25 +110,23 @@ public class Node implements INodeCli, Runnable {
 							InetAddress.getByName(config.getString("controller.host")),
 							config.getInt("controller.udp.port"));
 					
-					socket.send(packet);
+					socketAlive.send(packet);
 				} catch (UnknownHostException e) {
 					System.out.println("Cannot connect to host: " + e.getMessage());
 				} catch (IOException e) {
 					System.out.println(e.getClass().getSimpleName() + ": " + e.getMessage());
 				} finally {
-					if (socket != null && !socket.isClosed()) {
-						socket.close();
+					if (socketAlive != null && !socketAlive.isClosed()) {
+						socketAlive.close();
 					}
-
 				}
             }
         };
         
+        
         timerIsAlive = new Timer();        
         timerIsAlive.schedule(action, 10, config.getInt("node.alive"));
-      
-        new Thread(shell).start();	
-        
+
         try {
 			serverSocket = new ServerSocket(config.getInt("tcp.port"));
 		} catch (IOException e) {
@@ -133,6 +142,38 @@ public class Node implements INodeCli, Runnable {
 				} catch (IOException e1) {  }
 			} 
 		}	       
+	}
+	
+	private void twoPhaseCommit() {
+		DatagramSocket socketHello;
+		
+		try {	
+			socketHello = new DatagramSocket();
+			
+			String message = "!hello";
+			byte[] buffer = message.getBytes();
+			
+			DatagramPacket packet = new DatagramPacket(buffer, buffer.length,
+					InetAddress.getByName(config.getString("controller.host")),
+					config.getInt("controller.udp.port"));
+			
+			socketHello.send(packet);
+			
+			//get init from CloudController
+			buffer = new byte[1024];
+			packet = new DatagramPacket(buffer, buffer.length);
+			socketHello.receive(packet);
+
+			String request = new String(packet.getData());				
+			System.out.println(request);
+		
+		} catch (UnknownHostException e) {
+			System.out.println("Cannot connect to host: " + e.getMessage());
+		} catch (SocketException e) {
+			e.printStackTrace();
+		} catch (IOException e) {
+			System.out.println(e.getClass().getSimpleName() + ": " + e.getMessage());
+		} 
 	}
 
 	@Override

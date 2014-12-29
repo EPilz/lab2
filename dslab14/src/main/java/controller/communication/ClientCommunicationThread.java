@@ -31,10 +31,10 @@ public class ClientCommunicationThread extends Thread {
 	private Map<String, ClientInfo> clientInfos;
 	private CopyOnWriteArrayList<Socket> activeSockets;
 	
-	public ClientCommunicationThread(CloudController cloudController, ServerSocket serverSocket, int poolSize, Config userConfig) {
+	public ClientCommunicationThread(CloudController cloudController, ServerSocket serverSocket, Config userConfig) {
 		this.cloudController = cloudController;
 		this.serverSocket = serverSocket;
-		this.pool = Executors.newFixedThreadPool(poolSize);		
+		this.pool = Executors.newCachedThreadPool();		
 		this.userConfig = userConfig;
 		this.activeSockets =  new CopyOnWriteArrayList<>();
 		

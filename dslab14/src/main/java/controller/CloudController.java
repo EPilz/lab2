@@ -28,8 +28,6 @@ public class CloudController implements ICloudControllerCli, Runnable {
 	private DatagramSocket datagramSocket;
 	
 	private boolean stop = true;
-
-	
 	
 	/**
 	 * @param componentName
@@ -55,12 +53,12 @@ public class CloudController implements ICloudControllerCli, Runnable {
 		Config userConfig = new Config("user");
 		try {
 			serverSocket = new ServerSocket(config.getInt("tcp.port"));
-			clientCommunicationThread = new ClientCommunicationThread(this, serverSocket, config.getInt("thread.pool.client"), userConfig);
+			clientCommunicationThread = new ClientCommunicationThread(this, serverSocket, userConfig);
 			clientCommunicationThread.start();
 			
 			datagramSocket = new DatagramSocket(config.getInt("udp.port"));
 			nodeCommunicationThread = new NodeCommunicationThread(this, datagramSocket, 
-					config.getInt("node.timeout"), config.getInt("node.checkPeriod"));
+					config.getInt("node.timeout"), config.getInt("node.checkPeriod"), config.getInt("controller.rmax"));
 			nodeCommunicationThread.start();
 						
 			new Thread(shell).start();		
