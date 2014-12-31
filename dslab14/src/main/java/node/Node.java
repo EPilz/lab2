@@ -16,17 +16,22 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.net.UnknownHostException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
+import java.util.List;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.logging.LogFactory;
 
 import controller.info.NodeInfo;
 import util.Config;
 import cli.Command;
+import cli.MyShell;
 import cli.Shell;
 
 public class Node implements INodeCli, Runnable {
@@ -35,14 +40,17 @@ public class Node implements INodeCli, Runnable {
 	private Config config;
 
 	private ServerSocket serverSocket;
-	private Shell shell;
+	private MyShell shell;
 	private Timer timerIsAlive;
 	private String logDir;
 
 	private ExecutorService pool;
 	private boolean stop = true;
 	
+	private List<OtherNodeInfo> nodeResourceStatusList;
 	private int rmin;
+	private int current_resources;
+	private int new_resources;
 	
 	private static ThreadLocal<SimpleDateFormat> dateFormater = new ThreadLocal<SimpleDateFormat>() {
 	 
@@ -71,11 +79,12 @@ public class Node implements INodeCli, Runnable {
 		this.pool = Executors.newCachedThreadPool();
 		
 		this.rmin = config.getInt("node.rmin");
+		this.nodeResourceStatusList = Collections.synchronizedList(new ArrayList<OtherNodeInfo>());
 		
 		this.logDir = System.getProperty("user.dir") + File.separator + config.getString("log.dir") + File.separator;
 		createDir();	
 		
-		shell = new Shell(componentName, userRequestStream, userResponseStream);
+		shell = new MyShell(componentName, userRequestStream, userResponseStream);
 		shell.register(this);		
 	}
 	
@@ -88,65 +97,69 @@ public class Node implements INodeCli, Runnable {
 
 	@Override
 	public void run() {
-		new Thread(shell).start();	
+		new Thread(shell).start();		
 		
-		try {
-			shell.writeLine("Node: " + componentName + " is up! Enter command.");
-		} catch (IOException e2) {  }
+		shell.writeLine("Node: " + componentName + " is up!");
 		
 		//Method for Two-Phase Commit
-        twoPhaseCommit();
-            			
-		TimerTask action = new TimerTask() {				
-            public void run() {
-            	DatagramSocket socketAlive = null;
-            	
-            	try {
-	            	socketAlive = new DatagramSocket();
-	        		String message = "!alive " + config.getInt("tcp.port") + " " + config.getString("node.operators");
-	        		byte[] buffer = message.getBytes();
+        boolean goOnline = twoPhaseCommit();
+        
+        if(goOnline) {
+        	shell.writeLine("Node: " + componentName + " is online! Enter command.");
         	
-					DatagramPacket packet = new DatagramPacket(buffer, buffer.length,
-							InetAddress.getByName(config.getString("controller.host")),
-							config.getInt("controller.udp.port"));
-					
-					socketAlive.send(packet);
-				} catch (UnknownHostException e) {
-					System.out.println("Cannot connect to host: " + e.getMessage());
-				} catch (IOException e) {
-					System.out.println(e.getClass().getSimpleName() + ": " + e.getMessage());
-				} finally {
-					if (socketAlive != null && !socketAlive.isClosed()) {
-						socketAlive.close();
+			TimerTask action = new TimerTask() {				
+	            public void run() {
+	            	DatagramSocket socketAlive = null;
+	            	
+	            	try {
+		            	socketAlive = new DatagramSocket();
+		        		String message = "!alive " + config.getInt("tcp.port") + " " + config.getString("node.operators");
+		        		byte[] buffer = message.getBytes();
+	        	
+						DatagramPacket packet = new DatagramPacket(buffer, buffer.length,
+								InetAddress.getByName(config.getString("controller.host")),
+								config.getInt("controller.udp.port"));
+						
+						socketAlive.send(packet);
+					} catch (UnknownHostException e) {
+						shell.writeLine("Cannot connect to host: " + e.getMessage());
+					} catch (IOException e) {
+						shell.writeLine(e.getClass().getSimpleName() + ": " + e.getMessage());
+					} finally {
+						if (socketAlive != null && !socketAlive.isClosed()) {
+							socketAlive.close();
+						}
 					}
-				}
-            }
-        };
-        
-        
-        timerIsAlive = new Timer();        
-        timerIsAlive.schedule(action, 10, config.getInt("node.alive"));
-
-        try {
-			serverSocket = new ServerSocket(config.getInt("tcp.port"));
-		} catch (IOException e) {
-			throw new RuntimeException("Cannot listen on TCP port.", e);
-		}
-        
-        while (stop) {       	
-			try {
-				pool.execute(new NodeRequestThread(serverSocket.accept()));
+	            }
+	        };
+	        
+	        
+	        timerIsAlive = new Timer();        
+	        timerIsAlive.schedule(action, 10, config.getInt("node.alive"));
+	
+	        try {
+				serverSocket = new ServerSocket(config.getInt("tcp.port"));		
 			} catch (IOException e) {
+				throw new RuntimeException("Cannot listen on TCP port.", e);
+			}
+	        
+	        while (stop) {       	
 				try {
-					exit();
-				} catch (IOException e1) {  }
-			} 
-		}	       
+					pool.execute(new NodeRequestThread(serverSocket.accept()));
+				} catch (IOException e) {
+					try {
+						exit();
+					} catch (IOException e1) {  }
+				} 
+			}	 
+        } else {
+        	shell.writeLine("Node: " + componentName + " would require too many resources! Enter !exit");
+        }
 	}
 	
-	private void twoPhaseCommit() {
-		DatagramSocket socketHello;
-		
+	private boolean twoPhaseCommit() {
+		DatagramSocket socketHello = null;
+		boolean goOnline = true;
 		try {	
 			socketHello = new DatagramSocket();
 			
@@ -164,8 +177,48 @@ public class Node implements INodeCli, Runnable {
 			packet = new DatagramPacket(buffer, buffer.length);
 			socketHello.receive(packet);
 
-			String request = new String(packet.getData());				
-			System.out.println(request);
+			String request = new String(packet.getData());							
+			String[] lines = request.trim().split("\n");
+			
+			if(lines.length >= 2) {
+				int resourceLevel = Integer.parseInt(lines[lines.length - 1])
+						/ (lines.length - 1); //eigentlich -2, aber weil aktueller Node auch dividiert werden muss nur -1
+
+				current_resources = resourceLevel;
+			
+				ExecutorService poolNodes = Executors.newCachedThreadPool();
+				
+				if(rmin < resourceLevel) {
+					for (int i = 1; i < lines.length - 1; i++) {
+						String[] addr = lines[i].trim().split(":");
+						OtherNodeInfo otherNodeInfo = new OtherNodeInfo("-", Integer.parseInt(addr[1]), InetAddress.getByName(addr[0]));
+						nodeResourceStatusList.add(otherNodeInfo);
+						Socket socket = new Socket(otherNodeInfo.getInetAddress(), otherNodeInfo.getPort());						
+						poolNodes.execute(new NodeCheckResourceThread(socket, resourceLevel, otherNodeInfo, true));
+					}	
+					
+					try {
+						poolNodes.awaitTermination(2, TimeUnit.SECONDS);
+					} catch (InterruptedException e) {
+						System.out.println("exception await");
+					}
+
+					for (OtherNodeInfo otherNodeInfo : nodeResourceStatusList) {
+						Socket socket = new Socket(otherNodeInfo.getInetAddress(), otherNodeInfo.getPort());						
+						poolNodes.execute(new NodeCheckResourceThread(socket, resourceLevel, otherNodeInfo, false));
+						
+						if(! otherNodeInfo.getStatus().equals("ok")) {
+							goOnline = false;
+						}
+					}
+				} else {
+					goOnline = false;
+				}		
+			} else {
+				shell.writeLine("init request has the wrong format");
+				goOnline = false;
+			}
+			
 		
 		} catch (UnknownHostException e) {
 			System.out.println("Cannot connect to host: " + e.getMessage());
@@ -173,7 +226,12 @@ public class Node implements INodeCli, Runnable {
 			e.printStackTrace();
 		} catch (IOException e) {
 			System.out.println(e.getClass().getSimpleName() + ": " + e.getMessage());
-		} 
+		} finally{
+			if (socketHello != null && !socketHello.isClosed()) {
+				socketHello.close();
+			}			
+		}
+		return goOnline;
 	}
 
 	@Override
@@ -190,8 +248,10 @@ public class Node implements INodeCli, Runnable {
 				serverSocket.close();
 			} catch (IOException e) {  }
 		}
+		if(timerIsAlive != null) {
+			timerIsAlive.cancel();
+		}
 		
-		timerIsAlive.cancel();
 		shell.close();		
 		
 		return "Shut down completed! Bye ..";
@@ -214,13 +274,10 @@ public class Node implements INodeCli, Runnable {
 		node.run();
 	}
 
-	// --- Commands needed for Lab 2. Please note that you do not have to
-	// implement them for the first submission. ---
-
 	@Override
+	@Command
 	public String resources() throws IOException {
-		// TODO Auto-generated method stub
-		return null;
+		return "The current resources are " + current_resources + "!";
 	}
 	
 	class NodeRequestThread implements Runnable {
@@ -233,6 +290,7 @@ public class Node implements INodeCli, Runnable {
 		
 		@Override
 		public void run() {
+			System.out.println("run NodeRequestThread");
 			BufferedReader reader = null;
 			PrintWriter writer = null;
 			try {
@@ -240,10 +298,28 @@ public class Node implements INodeCli, Runnable {
 				writer = new PrintWriter(socket.getOutputStream(), true);
 	
 				String request;
-				while ((request = reader.readLine()) != null) {			
+				while ((request = reader.readLine()) != null) {		
 					if(request.startsWith("!compute")) {
 						writer.println(calculate(request.replaceAll("!compute", "").trim()));
-					} else {
+					} else if(request.startsWith("!share")) {
+						int resourceLevel = Integer.parseInt(request.trim().split("\\s+")[1]);
+						new_resources = resourceLevel;
+						
+						if(rmin <= resourceLevel) {
+							writer.println("!ok");
+						} else {
+							writer.println("!nok");
+						}							
+					} else if(request.startsWith("!commit")) {															    
+						int resourceLevel = Integer.parseInt(request.trim().split("\\s+")[1]);
+						
+						if(resourceLevel == new_resources) {
+							current_resources = new_resources;
+							new_resources = -1;
+						}
+					} else if(request.startsWith("!rollback")) {
+						new_resources = -1;					
+					} else {	
 						writer.println("not valid command");
 					}
 				}
@@ -263,7 +339,7 @@ public class Node implements INodeCli, Runnable {
 						socket.close();
 					} catch (IOException e) {  }
 				}
-			}			
+			}		
 		}
 		
 		private String calculate(String term) {
@@ -306,4 +382,65 @@ public class Node implements INodeCli, Runnable {
 			} catch (IOException e) {  }	
 		}
 	}
+
+	class NodeCheckResourceThread implements Runnable {
+
+		private final Socket socket;
+		private int resourceLevel;
+		private OtherNodeInfo otherNodeInfo;
+		private boolean sendShareCommand;
+		
+		public NodeCheckResourceThread(Socket socket, int resourceLevel, OtherNodeInfo listIndex, boolean sendShareCommand) { 
+			this.socket = socket; 
+			this.resourceLevel = resourceLevel;
+			this.otherNodeInfo = listIndex;
+			this.sendShareCommand = sendShareCommand;
+		}	
+		
+		@Override
+		public void run() {
+			System.out.println("run NodeCheckResourceThread");
+			BufferedReader reader = null;
+			PrintWriter writer = null;
+			try {
+				
+				reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));				
+				writer = new PrintWriter(socket.getOutputStream(), true);
+				
+				if(sendShareCommand) {
+					writer.println("!share " + resourceLevel);
+					String request = reader.readLine();		
+					
+					if(request.startsWith("!ok")) {					
+						otherNodeInfo.setStatus("ok");		
+					} else if(request.startsWith("!nok")){
+						otherNodeInfo.setStatus("nok");		
+					} 
+				} else {
+					if(otherNodeInfo.getStatus().equals("ok")) {					
+						writer.println("!commit " + resourceLevel);		
+					} else {
+						writer.println("!rollback " + resourceLevel);
+					}
+				}					
+			} catch (IOException e) {
+				System.err.println("Error occurred while communicating with client: " + e.getMessage());
+			} finally {
+				if(reader != null) {
+					try {
+						reader.close();
+					} catch (IOException e) {  }
+				}
+				if(writer != null) {
+					writer.close();
+				}
+				if (socket != null && !socket.isClosed()) {
+					try {
+						socket.close();
+					} catch (IOException e) {  }
+				}
+			}			
+		}
+	}
+
 }

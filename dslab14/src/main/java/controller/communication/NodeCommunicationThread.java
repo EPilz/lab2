@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.SocketAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -110,8 +111,7 @@ public class NodeCommunicationThread extends Thread {
 						nodeInfos.get(tcpPort).addOperators(operators);
 					}					
 				} else if(request.startsWith("!hello")) {
-					System.out.println(request);
-					sendInitToNode(ip, packet.getPort());
+					sendInitToNode(packet.getSocketAddress());
 				}
 			}
 		} catch (IOException e) { 
@@ -124,7 +124,7 @@ public class NodeCommunicationThread extends Thread {
 		}
 	}
 	
-	public void sendInitToNode(String ip, int port) {
+	public void sendInitToNode(SocketAddress socketAddress) {
 		DatagramSocket socket = null;
 		
 		try {
@@ -133,16 +133,17 @@ public class NodeCommunicationThread extends Thread {
 			String message = "!init";
 			
 			for (NodeInfo nodeInfo : nodeInfos.values()) {
-				message += "\n" + nodeInfo.getIp() + ":" + nodeInfo.getTcpPort();
+				if(nodeInfo.getStatus().equals(NodeInfo.Status.ONLINE)) {
+					message += "\n" + nodeInfo.getIp() + ":" + nodeInfo.getTcpPort();
+				}
 			}
 			message += "\n" + rmax;
 			
 			byte[] buffer = message.getBytes();
 			
-			DatagramPacket packet = new DatagramPacket(buffer, buffer.length, InetAddress.getByName(ip), port);
+			DatagramPacket packet = new DatagramPacket(buffer, buffer.length, socketAddress);
 			
 			socket.send(packet);
-			System.out.println("send: " + ip + "    " + port);
 		} catch (UnknownHostException e) {
 			System.out.println("Cannot connect to host: " + e.getMessage());
 		} catch (IOException e) {

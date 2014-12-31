@@ -277,9 +277,8 @@ public class Shell implements Runnable, Closeable {
 		String cmdName = pos >= 0 ? cmd.substring(0, pos) : cmd;
 		ShellCommandDefinition cmdDef = commandMap.get(cmdName);
 		if (cmdDef == null) {
-			//throw new IllegalArgumentException(String.format(
-			//	"Command '%s' not registered.", cmdName));
-			return String.format("Command '%s' not registered.", cmdName);
+			throw new IllegalArgumentException(String.format(
+					"Command '%s' not registered.", cmdName));
 		}
 
 		String[] parts = cmd.split("\\s+",
@@ -289,12 +288,8 @@ public class Shell implements Runnable, Closeable {
 			args[i - 1] = conversionService.convert(parts[i],
 					cmdDef.targetMethod.getParameterTypes()[i - 1]);
 		}
-		try {
-			return invocationHandler.invoke(cmdDef.targetObject,
-					cmdDef.targetMethod, args);
-		} catch(IllegalArgumentException ex) {
-			return String.format("wrong number of arguments");
-		}
+		return invocationHandler.invoke(cmdDef.targetObject,
+				cmdDef.targetMethod, args);
 	}
 
 	/**

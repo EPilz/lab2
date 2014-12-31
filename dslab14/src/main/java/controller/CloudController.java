@@ -8,8 +8,10 @@ import java.net.ServerSocket;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+
 import util.Config;
 import cli.Command;
+import cli.MyShell;
 import cli.Shell;
 import controller.communication.ClientCommunicationThread;
 import controller.communication.NodeCommunicationThread;
@@ -21,7 +23,7 @@ public class CloudController implements ICloudControllerCli, Runnable {
 	private String componentName;
 	private Config config;
 	
-	private Shell shell;
+	private MyShell shell;
 	private ClientCommunicationThread clientCommunicationThread;
 	private NodeCommunicationThread nodeCommunicationThread;
 	private ServerSocket serverSocket;
@@ -44,7 +46,7 @@ public class CloudController implements ICloudControllerCli, Runnable {
 		this.componentName = componentName;
 		this.config = config;
 		
-		shell = new Shell(componentName, userRequestStream, userResponseStream);
+		shell = new MyShell(componentName, userRequestStream, userResponseStream);
 		shell.register(this);
 	}
 
@@ -67,11 +69,8 @@ public class CloudController implements ICloudControllerCli, Runnable {
 				exit();
 			} catch (IOException e1) { }
 		}
-
-		try {
-			shell.writeLine("Controller " + componentName + " is online!");
-		} catch (IOException e) { }
-		
+	
+		shell.writeLine("Controller " + componentName + " is online!");
 	}
 		
 	public NodeInfo getNodeWithLeastUsage(Character operation) {
@@ -108,12 +107,6 @@ public class CloudController implements ICloudControllerCli, Runnable {
 		return str;
 	}
 	
-	public void writeToShell(String text) {
-		try {
-			shell.writeLine(text);
-		} catch (IOException e) {  }
-	}
-
 	@Override
 	@Command
 	public String nodes() throws IOException {
