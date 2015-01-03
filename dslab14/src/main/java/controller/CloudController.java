@@ -55,7 +55,7 @@ public class CloudController implements ICloudControllerCli, Runnable {
 		Config userConfig = new Config("user");
 		try {
 			serverSocket = new ServerSocket(config.getInt("tcp.port"));
-			clientCommunicationThread = new ClientCommunicationThread(this, serverSocket, userConfig);
+			clientCommunicationThread = new ClientCommunicationThread(this, serverSocket, config, userConfig);
 			clientCommunicationThread.start();
 			
 			datagramSocket = new DatagramSocket(config.getInt("udp.port"));

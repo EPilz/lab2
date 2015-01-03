@@ -1,12 +1,16 @@
 package controller.communication;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.security.PrivateKey;
+import java.security.PublicKey;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -15,7 +19,21 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+
+import org.bouncycastle.util.encoders.Base64;
+
+import util.Base64Channel;
+import util.Channel;
+import util.Channel.NotConnectedException;
 import util.Config;
+import util.Keys;
+import util.SecureChannel;
+import util.SecurityUtil;
+import util.TcpChannel;
 import controller.CloudController;
 import controller.info.ClientInfo;
 import controller.info.NodeInfo;
@@ -25,18 +43,20 @@ public class ClientCommunicationThread extends Thread {
 	private ServerSocket serverSocket;
 	
 	private ExecutorService pool;
+	private Config controllerConfig;
 	private Config userConfig;
 	private CloudController cloudController;
 	
 	private Map<String, ClientInfo> clientInfos;
-	private CopyOnWriteArrayList<Socket> activeSockets;
+	private CopyOnWriteArrayList<Channel> activeChannels;
 	
-	public ClientCommunicationThread(CloudController cloudController, ServerSocket serverSocket, Config userConfig) {
+	public ClientCommunicationThread(CloudController cloudController, ServerSocket serverSocket, Config controllerConfig, Config userConfig) {
 		this.cloudController = cloudController;
 		this.serverSocket = serverSocket;
-		this.pool = Executors.newCachedThreadPool();		
+		this.pool = Executors.newCachedThreadPool();
+		this.controllerConfig = controllerConfig;
 		this.userConfig = userConfig;
-		this.activeSockets =  new CopyOnWriteArrayList<>();
+		this.activeChannels =  new CopyOnWriteArrayList<>();
 		
 		initClientInfos();
 	}
@@ -66,8 +86,9 @@ public class ClientCommunicationThread extends Thread {
 		while (cloudController.isStop()) {
 			try {
 				Socket socket = serverSocket.accept();
-				activeSockets.add(socket);
-				pool.execute(new ClientConnectionThread(socket));
+				ClientConnectionThread clientConnectionThread = new ClientConnectionThread(controllerConfig, socket);
+				activeChannels.add(clientConnectionThread.getChannel());
+				pool.execute(clientConnectionThread);
 			} catch (IOException e) {
 				break;
 			} 
@@ -75,12 +96,9 @@ public class ClientCommunicationThread extends Thread {
 	}
 	
 	public void shutdown() {
-		for (Socket socket : activeSockets) {
-			try {
-				socket.close();
-			} catch (IOException e) {
-				e.printStackTrace();
-			}			
+		for (Channel channel : activeChannels) {
+			if(channel != null)
+				channel.close();			
 		}
 		for (ClientInfo clientInfo : clientInfos.values()) {
 			clientInfo.setStatus(ClientInfo.Status.OFFLINE);
@@ -91,62 +109,52 @@ public class ClientCommunicationThread extends Thread {
 	}
 	
 	class ClientConnectionThread implements Runnable {
+		private final String B64 = "a-zA-Z0-9/+";
 		
-		private final Socket socket;
+		private Channel channel;
 		private String loggedInUser;
 		
-		public ClientConnectionThread(Socket socket) { 
-			this.socket = socket; 
+		public ClientConnectionThread(Config controllerConfig, Socket socket) { 
+			this.channel = new Base64Channel(socket);
+			
+			String keysDir = controllerConfig.getString("keys.dir");
+			File privateKey = new File(controllerConfig.getString("key"));
+			
+			readAndAnswerChallenge(privateKey, keysDir);
 		}	
 
 		@Override
 		public void run() {
-			BufferedReader reader = null;
-			PrintWriter writer = null;
-			
 			try {
-				reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));				
-				writer = new PrintWriter(socket.getOutputStream(), true);
-	
 				String request;
-				while ((request = reader.readLine()) != null) {					
+				while ((request = getChannel().readMessage()) != null) {		
 					if(request.startsWith("login")) {
-						writer.println(login(request));
+						getChannel().sendMessage(login(request));
 					} else if(request.startsWith("logout")) {
-						writer.println(logout());
+						getChannel().sendMessage(logout());
 					} else if(request.startsWith("credits")) {
-						writer.println(credits());
+						getChannel().sendMessage(credits());
 					} else if(request.startsWith("buy")) {
-						writer.println(buy(request));
+						getChannel().sendMessage(buy(request));
 					} else if(request.startsWith("list")) {
-						writer.println(list());
+						getChannel().sendMessage(list());
 					} else if(request.startsWith("compute")) {
-						writer.println(compute(request));
+						getChannel().sendMessage(compute(request));
 					} else {
-						writer.println("command not found");
+						getChannel().sendMessage("command not found");
 					}	
 				}
 			} catch (IOException e) { 
-				
+				e.printStackTrace();
+			} catch (NotConnectedException e) {
+				e.printStackTrace();
 			} 
 			finally {
-				if (socket != null) {
-					try {
-						activeSockets.remove(socket);
-						if(!socket.isClosed()) {
-							socket.close();
-						}
-					} catch (IOException e) { }
-				}
-				if(reader != null) {
-					try {
-						reader.close();
-					} catch (IOException ex) {
-						System.out.println(ex.getMessage());
+				if (getChannel() != null) {
+					activeChannels.remove(getChannel());
+					if(getChannel().isConnected()) {
+						getChannel().close();
 					}
-				}
-				if(writer != null) {
-					writer.close();
 				}
 				if(loggedInUser != null) {
 					clientInfos.get(loggedInUser).setStatus(ClientInfo.Status.OFFLINE);					
@@ -294,6 +302,61 @@ public class ClientCommunicationThread extends Thread {
 			}
 			String operators = cloudController.listOfOperators();
 			return operators.isEmpty() ? "no operations support currently" : operators;
+		}
+
+		public Channel getChannel() {
+			return channel;
+		}
+		
+		private void readAndAnswerChallenge(File privateKeyFile, String keysDir)
+		{
+			try {
+				//Read message from client
+				byte[] encryptedMessage = channel.readByteMessage();
+				
+				PrivateKey privateKey = Keys.readPrivatePEM(privateKeyFile);
+				Cipher privateCipher = Cipher.getInstance("RSA/NONE/OAEPWithSHA256AndMGF1Padding");
+				privateCipher.init(Cipher.DECRYPT_MODE, privateKey);
+				byte[] decryptedMessage = privateCipher.doFinal(encryptedMessage);
+				String message = new String(decryptedMessage);
+				assert message.matches("!authenticate \\w+ ["+B64+"]{43}=") : "1st message";
+				System.out.println(message);
+				String[] messageParts = message.split(" ");
+				
+				//Prepare answer
+				String username = messageParts[1];
+				File publicKeyOfUser = new File(keysDir + "/" + username + ".pub.pem");
+				
+				String clientChallenge = messageParts[2];
+				byte[] controllerChallenge = SecurityUtil.createBase64Challenge();
+				SecretKey key = SecurityUtil.createAESKey();
+				byte[] ivParam = SecurityUtil.createIVParam();
+				String answer = String.format("!ok %s %s %s %s", clientChallenge, new String(controllerChallenge),
+						new String(Base64.encode(key.getEncoded())), new String(Base64.encode(ivParam)));
+				
+				//Encrypt message using public key of host and send it
+				PublicKey publicKey = Keys.readPublicPEM(publicKeyOfUser);
+				Cipher publicCipher = Cipher.getInstance("RSA/NONE/OAEPWithSHA256AndMGF1Padding");
+				publicCipher.init(Cipher.ENCRYPT_MODE, publicKey);
+				byte[] encryptedAnswer = publicCipher.doFinal(answer.getBytes());
+				channel.sendMessage(encryptedAnswer);
+				System.out.println("Send ok! message");
+				//Create secure channel
+				channel = new SecureChannel((Base64Channel) channel, key, ivParam);
+				System.out.println("Created secure channel");
+				//Read controller challenge and check it
+				byte[] controllerChallengeAnswer = channel.readByteMessage();
+				System.out.println("Read message: " + new String(controllerChallenge));
+				if(!Arrays.equals(controllerChallengeAnswer, controllerChallenge))
+					channel.close();
+				else //Login user
+				{
+					loggedInUser = username;
+					clientInfos.get(loggedInUser).setStatus(ClientInfo.Status.ONLINE);
+				}
+			} catch (Exception e) {
+				e.printStackTrace(); //TODO: delete
+			}
 		}
 	}
 }
