@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -21,7 +22,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import javax.crypto.Cipher;
-import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 
 import org.bouncycastle.util.encoders.Base64;
@@ -33,7 +33,6 @@ import util.Config;
 import util.Keys;
 import util.SecureChannel;
 import util.SecurityUtil;
-import util.TcpChannel;
 import controller.CloudController;
 import controller.info.ClientInfo;
 import controller.info.NodeInfo;
@@ -49,6 +48,7 @@ public class ClientCommunicationThread extends Thread {
 	
 	private Map<String, ClientInfo> clientInfos;
 	private CopyOnWriteArrayList<Channel> activeChannels;
+	private LinkedHashMap<Character, Long> usageOfOperators = new LinkedHashMap<>();
 	
 	public ClientCommunicationThread(CloudController cloudController, ServerSocket serverSocket, Config controllerConfig, Config userConfig) {
 		this.cloudController = cloudController;
@@ -236,6 +236,7 @@ public class ClientCommunicationThread extends Thread {
 			String[] splitTerm = request.split(" ");
 						
 			String operators = request.replaceAll("\\d", "").replaceAll("\\s", "");
+			updateUsageOfOperators(operators);
 			String supportedOperators = cloudController.listOfOperators();
 			
 			for (int i = 0; i < operators.length(); i++) {
@@ -358,6 +359,23 @@ public class ClientCommunicationThread extends Thread {
 				e.printStackTrace(); //TODO: delete
 			}
 		}
+		
+		private void updateUsageOfOperators(String operators){
+			for(int i = 0; i<operators.length(); i++){
+				char akt = operators.charAt(i);
+				if(usageOfOperators.containsKey(akt)){
+					long newStat = usageOfOperators.get(akt)+1;
+					usageOfOperators.put(akt, newStat);
+				} else {
+					usageOfOperators.put(akt, 1L);
+				}
+			}
+		}
+		
+	}
+
+	public LinkedHashMap<Character, Long> getUsageOfOperators() {
+		return usageOfOperators;
 	}
 }
 

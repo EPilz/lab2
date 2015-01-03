@@ -3,9 +3,13 @@ package node;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.net.DatagramPacket;
@@ -25,6 +29,8 @@ import java.util.TimerTask;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+
+import model.ComputationRequestInfo;
 
 import org.apache.commons.logging.LogFactory;
 
@@ -51,6 +57,8 @@ public class Node implements INodeCli, Runnable {
 	private int rmin;
 	private int current_resources;
 	private int new_resources;
+	
+	private List<String> namesOfLogFiles = new ArrayList<>();
 	
 	private static ThreadLocal<SimpleDateFormat> dateFormater = new ThreadLocal<SimpleDateFormat>() {
 	 
@@ -293,11 +301,13 @@ public class Node implements INodeCli, Runnable {
 			System.out.println("run NodeRequestThread");
 			BufferedReader reader = null;
 			PrintWriter writer = null;
+			
 			try {
 				reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));				
 				writer = new PrintWriter(socket.getOutputStream(), true);
-	
-				String request;
+								
+				String request = "";
+
 				while ((request = reader.readLine()) != null) {		
 					if(request.startsWith("!compute")) {
 						writer.println(calculate(request.replaceAll("!compute", "").trim()));
@@ -318,14 +328,22 @@ public class Node implements INodeCli, Runnable {
 							new_resources = -1;
 						}
 					} else if(request.startsWith("!rollback")) {
-						new_resources = -1;					
+						new_resources = -1;		
+					} else if(request.startsWith("!getLogs")) {
+						shell.writeLine("getLogs command arrived");
+						sendLogsToCloudController();						
 					} else {	
 						writer.println("not valid command");
 					}
 				}
 			} catch (IOException e) {
-				System.err.println("Error occurred while communicating with client: " + e.getMessage());
-			} finally {
+//				der inputstream wirft immer eine IOException...
+				System.err.println("Error occurred while communicating with client...");
+				e.printStackTrace();
+			} catch (NumberFormatException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}  finally {
 				if(reader != null) {
 					try {
 						reader.close();
@@ -371,6 +389,7 @@ public class Node implements INodeCli, Runnable {
 		
 		private void writeLog(String term, String result) {
 			String fileName = logDir + dateFormater.get().format(new Date()) +  "_" + componentName + ".log";
+			namesOfLogFiles.add(fileName);
 			BufferedWriter fileWriter;
 			try {
 				fileWriter = new BufferedWriter(new PrintWriter(fileName));
@@ -380,6 +399,54 @@ public class Node implements INodeCli, Runnable {
 				fileWriter.flush();
 				fileWriter.close();
 			} catch (IOException e) {  }	
+		}
+		
+		private void sendLogsToCloudController() {
+//			List<ComputationRequestInfo> out = new ArrayList<>();
+			ObjectOutputStream outStream = null;
+			try {
+				outStream = new ObjectOutputStream(socket.getOutputStream());
+				
+				ComputationRequestInfo computationRequestInfo = new ComputationRequestInfo();
+				computationRequestInfo.setNodeName("test test");
+				outStream.writeObject(computationRequestInfo);
+				outStream.flush();
+				
+				/*for(String fname : namesOfLogFiles){
+					FileInputStream fstream = new FileInputStream(fname);				
+					BufferedReader fileReader = new BufferedReader(new InputStreamReader(fstream));
+					ComputationRequestInfo computationRequestInfo = new ComputationRequestInfo();
+					computationRequestInfo.setNodeName(componentName);
+					String timeStamp = fname.replace("_"+componentName+".log", "");
+					computationRequestInfo.setTimestamp(timeStamp);
+					
+					String strLine;
+					String fileContent = "";
+					while ((strLine = fileReader.readLine()) != null){
+					     fileContent += strLine;
+					}
+					fileContent = fileContent.replace("/n", "=");
+					computationRequestInfo.setFileContent(fileContent);
+
+					outStream.writeObject(computationRequestInfo);
+
+//					out.add(computationRequestInfo);
+				}		*/
+			} catch (FileNotFoundException e) {
+				e.printStackTrace();
+			} catch (IOException e) {
+				e.printStackTrace();
+			}	finally {
+				if(outStream != null) {
+					try {
+						outStream.close();
+					} catch (IOException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+				}
+			}
+//			return out;
 		}
 	}
 

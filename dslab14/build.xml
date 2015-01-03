@@ -85,6 +85,12 @@
 		<delete dir="${build.dir}" />
 		<delete dir="${reports.dir}" />
 	</target>
+	
+	<target name="run-admin" depends="compile" description="Run Admin-Console.">
+	   <java classname="admin.AdminConsole" fork="true" classpathref="project.classpath">
+	     <arg value="admin" />
+	   </java>
+	</target>
 
 	<target name="rebuild" depends="clean, compile" description="Clean and build products." />
 </project>

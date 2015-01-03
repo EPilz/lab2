@@ -1,14 +1,33 @@
 package controller;
 
+import java.io.BufferedReader;
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.io.PrintStream;
+import java.io.PrintWriter;
 import java.net.DatagramSocket;
+import java.net.InetAddress;
 import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.UnknownHostException;
+import java.rmi.AlreadyBoundException;
+import java.rmi.RemoteException;
+import java.rmi.registry.LocateRegistry;
+import java.rmi.registry.Registry;
+import java.rmi.server.UnicastRemoteObject;
+import java.security.Key;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Set;
 
+import model.ComputationRequestInfo;
+import admin.INotificationCallback;
 import util.Config;
 import cli.Command;
 import cli.MyShell;
@@ -18,10 +37,11 @@ import controller.communication.NodeCommunicationThread;
 import controller.info.ClientInfo;
 import controller.info.NodeInfo;
 
-public class CloudController implements ICloudControllerCli, Runnable {
+public class CloudController implements ICloudControllerCli, IAdminConsole, Runnable {
 
 	private String componentName;
 	private Config config;
+	private Registry registry;
 	
 	private MyShell shell;
 	private ClientCommunicationThread clientCommunicationThread;
@@ -63,11 +83,22 @@ public class CloudController implements ICloudControllerCli, Runnable {
 					config.getInt("node.timeout"), config.getInt("node.checkPeriod"), config.getInt("controller.rmax"));
 			nodeCommunicationThread.start();
 						
-			new Thread(shell).start();		
+			new Thread(shell).start();
+			
+			// create and export the registry instance on localhost at the specified port
+			registry = LocateRegistry.createRegistry(config.getInt("controller.rmi.port"));
+			// create a remote object of this server object
+			IAdminConsole remote = (IAdminConsole) UnicastRemoteObject
+					.exportObject(this, 0);
+			// bind the obtained remote object on specified binding name in the registry
+			registry.bind(config.getString("binding.name"), remote);
 		} catch (IOException e) {
 			try {
 				exit();
 			} catch (IOException e1) { }
+		} catch (AlreadyBoundException e) {
+			throw new RuntimeException(
+					"Error while binding remote object to registry.", e);
 		}
 	
 		shell.writeLine("Controller " + componentName + " is online!");
@@ -169,6 +200,80 @@ public class CloudController implements ICloudControllerCli, Runnable {
 	public static void main(String[] args) {
 		CloudController cloudController = new CloudController(args[0], new Config("controller"), System.in, System.out);		
 		cloudController.run();
+	}
+
+	@Override
+	public boolean subscribe(String username, int credits,
+			INotificationCallback callback) throws RemoteException {
+		return false;
+	}
+
+	@Override
+	public List<ComputationRequestInfo> getLogs() throws RemoteException {
+		shell.writeLine("get Logs in cloud controller");
+		List<ComputationRequestInfo> out = new ArrayList<>();
+		Socket socket = null;
+		for (NodeInfo nodeInfo : nodeCommunicationThread.nodeInfos()) {
+			shell.writeLine("NodeInfo "+nodeInfo.getStatus() + " IP: " + nodeInfo.getIp() +" TCP: " +nodeInfo.getTcpPort());
+			if(nodeInfo.getStatus().equals(NodeInfo.Status.ONLINE)) {
+				try {					
+					socket = new Socket(InetAddress.getByName(nodeInfo.getIp()), nodeInfo.getTcpPort());					
+					shell.writeLine("Socket erstellt");
+					
+					//ObjectOutputStream objectOutputStream = new ObjectOutputStream(socket.getOutputStream());
+					PrintWriter writer = new PrintWriter(socket.getOutputStream(), true);
+					shell.writeLine("Outputstream erstellt");
+				//	objectOutputStream.flush();
+					
+					String s = "!getLogs";										
+					//objectOutputStream.writeChars(s);
+					writer.println(s);
+					ObjectInputStream objectInputStream = new ObjectInputStream(socket.getInputStream());			
+					
+					shell.writeLine("InputStream erstellt");
+					while(true){
+						try {
+							ComputationRequestInfo req = (ComputationRequestInfo) objectInputStream.readObject();
+							out.add(req);
+							System.out.println(req);
+						} catch(EOFException ex) {
+							break;
+						}
+					} 
+				} catch (UnknownHostException e) {
+					e.printStackTrace();
+				} catch (IOException e) {
+					e.printStackTrace();
+				} catch (ClassNotFoundException e) {
+					e.printStackTrace();
+				} finally {
+					if(socket != null && ! socket.isClosed()) {
+						try {
+							socket.close();
+						} catch (IOException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
+						}
+					}
+				}
+			}
+		}
+		return out;
+	}
+
+	@Override
+	public LinkedHashMap<Character, Long> statistics() throws RemoteException {
+		return clientCommunicationThread.getUsageOfOperators();
+	}
+
+	@Override
+	public Key getControllerPublicKey() throws RemoteException {
+		return null;
+	}
+
+	@Override
+	public void setUserPublicKey(String username, byte[] key)
+			throws RemoteException {
 	}
 
 }
