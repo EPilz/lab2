@@ -12,6 +12,7 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.PrintStream;
 import java.io.PrintWriter;
+import java.net.ConnectException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
@@ -57,13 +58,14 @@ public class Node implements INodeCli, Runnable {
 	private int rmin;
 	private int current_resources;
 	private int new_resources;
+	private boolean connectToCloudController = true;
 	
 	private List<String> namesOfLogFiles = new ArrayList<>();
 	
 	private static ThreadLocal<SimpleDateFormat> dateFormater = new ThreadLocal<SimpleDateFormat>() {
 	 
 		@Override
-	    protected SimpleDateFormat initialValue() {
+	    protected SimpleDateFormat initialValue() { 
 	        return new SimpleDateFormat("yyyyMMdd_HHmmss.SSS");
 	    }
 	};
@@ -110,9 +112,9 @@ public class Node implements INodeCli, Runnable {
 		shell.writeLine("Node: " + componentName + " is up!");
 		
 		//Method for Two-Phase Commit
-        boolean goOnline = twoPhaseCommit();
+		twoPhaseCommit();
         
-        if(goOnline) {
+        if(connectToCloudController) {
         	shell.writeLine("Node: " + componentName + " is online! Enter command.");
         	
 			TimerTask action = new TimerTask() {				
@@ -161,13 +163,13 @@ public class Node implements INodeCli, Runnable {
 				} 
 			}	 
         } else {
-        	shell.writeLine("Node: " + componentName + " would require too many resources! Enter !exit");
+        	shell.writeLine("Node: " + componentName + " cannot connect to CloudController! Enter !exit");
         }
 	}
 	
-	private boolean twoPhaseCommit() {
+	private void twoPhaseCommit() {
 		DatagramSocket socketHello = null;
-		boolean goOnline = true;
+		ExecutorService poolNodes = null;
 		try {	
 			socketHello = new DatagramSocket();
 			
@@ -194,40 +196,33 @@ public class Node implements INodeCli, Runnable {
 
 				current_resources = resourceLevel;
 			
-				ExecutorService poolNodes = Executors.newCachedThreadPool();
+				poolNodes = Executors.newCachedThreadPool();
 				
-				if(rmin < resourceLevel) {
+				if(rmin <= resourceLevel) {
 					for (int i = 1; i < lines.length - 1; i++) {
 						String[] addr = lines[i].trim().split(":");
 						OtherNodeInfo otherNodeInfo = new OtherNodeInfo("-", Integer.parseInt(addr[1]), InetAddress.getByName(addr[0]));
 						nodeResourceStatusList.add(otherNodeInfo);
-						Socket socket = new Socket(otherNodeInfo.getInetAddress(), otherNodeInfo.getPort());						
-						poolNodes.execute(new NodeCheckResourceThread(socket, resourceLevel, otherNodeInfo, true));
+						poolNodes.execute(new NodeCheckResourceThread(resourceLevel, otherNodeInfo, true));											
 					}	
 					
 					try {
-						poolNodes.awaitTermination(2, TimeUnit.SECONDS);
+						poolNodes.awaitTermination(1, TimeUnit.SECONDS);
 					} catch (InterruptedException e) {
 						System.out.println("exception await");
+						connectToCloudController = false;
 					}
 
-					for (OtherNodeInfo otherNodeInfo : nodeResourceStatusList) {
-						Socket socket = new Socket(otherNodeInfo.getInetAddress(), otherNodeInfo.getPort());						
-						poolNodes.execute(new NodeCheckResourceThread(socket, resourceLevel, otherNodeInfo, false));
-						
-						if(! otherNodeInfo.getStatus().equals("ok")) {
-							goOnline = false;
-						}
+					for (OtherNodeInfo otherNodeInfo : nodeResourceStatusList) {					
+						poolNodes.execute(new NodeCheckResourceThread(resourceLevel, otherNodeInfo, false));
 					}
 				} else {
-					goOnline = false;
+					connectToCloudController = false;
 				}		
 			} else {
 				shell.writeLine("init request has the wrong format");
-				goOnline = false;
-			}
-			
-		
+				connectToCloudController = false;
+			}		
 		} catch (UnknownHostException e) {
 			System.out.println("Cannot connect to host: " + e.getMessage());
 		} catch (SocketException e) {
@@ -237,9 +232,11 @@ public class Node implements INodeCli, Runnable {
 		} finally{
 			if (socketHello != null && !socketHello.isClosed()) {
 				socketHello.close();
-			}			
+			}	
+			if (poolNodes != null) {
+				poolNodes.shutdown();
+			}
 		}
-		return goOnline;
 	}
 
 	@Override
@@ -267,7 +264,6 @@ public class Node implements INodeCli, Runnable {
 
 	@Override
 	public String history(int numberOfRequests) throws IOException {
-		// TODO Auto-generated method stub
 		return null;
 	}
 
@@ -285,7 +281,11 @@ public class Node implements INodeCli, Runnable {
 	@Override
 	@Command
 	public String resources() throws IOException {
-		return "The current resources are " + current_resources + "!";
+		if(connectToCloudController) {
+			return "The current resources are " + current_resources + "!";
+		} else {
+			return "Not connected to cloud controller!";
+		}
 	}
 	
 	class NodeRequestThread implements Runnable {
@@ -298,7 +298,6 @@ public class Node implements INodeCli, Runnable {
 		
 		@Override
 		public void run() {
-			System.out.println("run NodeRequestThread");
 			BufferedReader reader = null;
 			PrintWriter writer = null;
 			
@@ -320,7 +319,8 @@ public class Node implements INodeCli, Runnable {
 						} else {
 							writer.println("!nok");
 						}							
-					} else if(request.startsWith("!commit")) {															    
+					} else if(request.startsWith("!commit")) {		
+						System.out.println("commit");
 						int resourceLevel = Integer.parseInt(request.trim().split("\\s+")[1]);
 						
 						if(resourceLevel == new_resources) {
@@ -328,6 +328,7 @@ public class Node implements INodeCli, Runnable {
 							new_resources = -1;
 						}
 					} else if(request.startsWith("!rollback")) {
+						System.out.println("rollback");
 						new_resources = -1;		
 					} else if(request.startsWith("!getLogs")) {
 						shell.writeLine("getLogs command arrived");
@@ -452,13 +453,12 @@ public class Node implements INodeCli, Runnable {
 
 	class NodeCheckResourceThread implements Runnable {
 
-		private final Socket socket;
+		private Socket socket;
 		private int resourceLevel;
 		private OtherNodeInfo otherNodeInfo;
 		private boolean sendShareCommand;
 		
-		public NodeCheckResourceThread(Socket socket, int resourceLevel, OtherNodeInfo listIndex, boolean sendShareCommand) { 
-			this.socket = socket; 
+		public NodeCheckResourceThread(int resourceLevel, OtherNodeInfo listIndex, boolean sendShareCommand) { 
 			this.resourceLevel = resourceLevel;
 			this.otherNodeInfo = listIndex;
 			this.sendShareCommand = sendShareCommand;
@@ -466,10 +466,10 @@ public class Node implements INodeCli, Runnable {
 		
 		@Override
 		public void run() {
-			System.out.println("run NodeCheckResourceThread");
 			BufferedReader reader = null;
 			PrintWriter writer = null;
 			try {
+				socket = new Socket(otherNodeInfo.getInetAddress(), otherNodeInfo.getPort());
 				
 				reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));				
 				writer = new PrintWriter(socket.getOutputStream(), true);
@@ -482,16 +482,18 @@ public class Node implements INodeCli, Runnable {
 						otherNodeInfo.setStatus("ok");		
 					} else if(request.startsWith("!nok")){
 						otherNodeInfo.setStatus("nok");		
+						connectToCloudController = false;
 					} 
 				} else {
-					if(otherNodeInfo.getStatus().equals("ok")) {					
+					if(connectToCloudController) {					
 						writer.println("!commit " + resourceLevel);		
 					} else {
-						writer.println("!rollback " + resourceLevel);
+						writer.println("!rollback");
 					}
 				}					
 			} catch (IOException e) {
-				System.err.println("Error occurred while communicating with client: " + e.getMessage());
+				System.err.println("Error occurred while communicating with the other nodes!");
+				connectToCloudController = false;
 			} finally {
 				if(reader != null) {
 					try {
