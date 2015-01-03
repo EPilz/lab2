@@ -9,12 +9,14 @@ import java.net.Socket;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
 import util.Config;
 import controller.CloudController;
 import controller.info.ClientInfo;
@@ -30,6 +32,7 @@ public class ClientCommunicationThread extends Thread {
 	
 	private Map<String, ClientInfo> clientInfos;
 	private CopyOnWriteArrayList<Socket> activeSockets;
+	private LinkedHashMap<Character, Long> usageOfOperators = new LinkedHashMap<>();
 	
 	public ClientCommunicationThread(CloudController cloudController, ServerSocket serverSocket, Config userConfig) {
 		this.cloudController = cloudController;
@@ -228,6 +231,7 @@ public class ClientCommunicationThread extends Thread {
 			String[] splitTerm = request.split(" ");
 						
 			String operators = request.replaceAll("\\d", "").replaceAll("\\s", "");
+			updateUsageOfOperators(operators);
 			String supportedOperators = cloudController.listOfOperators();
 			
 			for (int i = 0; i < operators.length(); i++) {
@@ -295,6 +299,23 @@ public class ClientCommunicationThread extends Thread {
 			String operators = cloudController.listOfOperators();
 			return operators.isEmpty() ? "no operations support currently" : operators;
 		}
+		
+		private void updateUsageOfOperators(String operators){
+			for(int i = 0; i<operators.length(); i++){
+				char akt = operators.charAt(i);
+				if(usageOfOperators.containsKey(akt)){
+					long newStat = usageOfOperators.get(akt)+1;
+					usageOfOperators.put(akt, newStat);
+				} else {
+					usageOfOperators.put(akt, 1L);
+				}
+			}
+		}
+		
+	}
+
+	public LinkedHashMap<Character, Long> getUsageOfOperators() {
+		return usageOfOperators;
 	}
 }
 
