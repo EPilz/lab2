@@ -1,6 +1,7 @@
 package controller;
 
 import java.io.BufferedReader;
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -9,6 +10,7 @@ import java.io.ObjectOutputStream;
 import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.net.DatagramSocket;
+import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.UnknownHostException;
@@ -210,31 +212,49 @@ public class CloudController implements ICloudControllerCli, IAdminConsole, Runn
 	public List<ComputationRequestInfo> getLogs() throws RemoteException {
 		shell.writeLine("get Logs in cloud controller");
 		List<ComputationRequestInfo> out = new ArrayList<>();
+		Socket socket = null;
 		for (NodeInfo nodeInfo : nodeCommunicationThread.nodeInfos()) {
 			shell.writeLine("NodeInfo "+nodeInfo.getStatus() + " IP: " + nodeInfo.getIp() +" TCP: " +nodeInfo.getTcpPort());
 			if(nodeInfo.getStatus().equals(NodeInfo.Status.ONLINE)) {
-				try {
-					Socket socket = new Socket(nodeInfo.getIp(), nodeInfo.getTcpPort());					
+				try {					
+					socket = new Socket(InetAddress.getByName(nodeInfo.getIp()), nodeInfo.getTcpPort());					
 					shell.writeLine("Socket erstellt");
 					
-					ObjectOutputStream objectOutputStream = new ObjectOutputStream(socket.getOutputStream());
+					//ObjectOutputStream objectOutputStream = new ObjectOutputStream(socket.getOutputStream());
+					PrintWriter writer = new PrintWriter(socket.getOutputStream(), true);
 					shell.writeLine("Outputstream erstellt");
-					objectOutputStream.flush();
+				//	objectOutputStream.flush();
 					
 					String s = "!getLogs";										
-					objectOutputStream.writeObject(s);
-				
-					ObjectInputStream objectInputStream = new ObjectInputStream(socket.getInputStream());					
+					//objectOutputStream.writeChars(s);
+					writer.println(s);
+					ObjectInputStream objectInputStream = new ObjectInputStream(socket.getInputStream());			
+					
 					shell.writeLine("InputStream erstellt");
 					while(true){
-						out.add((ComputationRequestInfo) objectInputStream.readObject());
-					}
+						try {
+							ComputationRequestInfo req = (ComputationRequestInfo) objectInputStream.readObject();
+							out.add(req);
+							System.out.println(req);
+						} catch(EOFException ex) {
+							break;
+						}
+					} 
 				} catch (UnknownHostException e) {
 					e.printStackTrace();
 				} catch (IOException e) {
 					e.printStackTrace();
 				} catch (ClassNotFoundException e) {
 					e.printStackTrace();
+				} finally {
+					if(socket != null && ! socket.isClosed()) {
+						try {
+							socket.close();
+						} catch (IOException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
+						}
+					}
 				}
 			}
 		}

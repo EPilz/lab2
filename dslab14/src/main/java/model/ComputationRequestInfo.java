@@ -1,10 +1,12 @@
 package model;
 
+import java.io.Serializable;
+
 /**
  * Please note that this class is not needed for Lab 1, but will later be used
  * in Lab 2. Hence, you do not have to implement it for the first submission.
  */
-public class ComputationRequestInfo {
+public class ComputationRequestInfo implements Serializable {
 	// TODO: implement
 
 	private String timestamp;

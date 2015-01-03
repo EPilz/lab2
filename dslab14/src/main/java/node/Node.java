@@ -301,14 +301,13 @@ public class Node implements INodeCli, Runnable {
 			System.out.println("run NodeRequestThread");
 			BufferedReader reader = null;
 			PrintWriter writer = null;
-			ObjectInputStream inStream = null;
-//			ObjectOutputStream outStream = null;
 			
 			try {
 				reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));				
 				writer = new PrintWriter(socket.getOutputStream(), true);
 								
-				String request;
+				String request = "";
+
 				while ((request = reader.readLine()) != null) {		
 					if(request.startsWith("!compute")) {
 						writer.println(calculate(request.replaceAll("!compute", "").trim()));
@@ -330,33 +329,21 @@ public class Node implements INodeCli, Runnable {
 						}
 					} else if(request.startsWith("!rollback")) {
 						new_resources = -1;		
+					} else if(request.startsWith("!getLogs")) {
+						shell.writeLine("getLogs command arrived");
+						sendLogsToCloudController();						
 					} else {	
 						writer.println("not valid command");
 					}
 				}
-				
-				inStream = new ObjectInputStream(socket.getInputStream());
-				
-				try {
-//					Object o;
-					while(true){
-						Object o = inStream.readObject();
-						shell.writeLine("object arrived");
-							if(o instanceof String){
-								if(((String) o).equals("!getLogs")){
-									shell.writeLine("getLogs command arrived");
-									sendLogsToCloudController();
-								}
-							}
-					}
-				} catch (ClassNotFoundException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				}
 			} catch (IOException e) {
 //				der inputstream wirft immer eine IOException...
-//				System.err.println("Error occurred while communicating with client: " + e);
-			} finally {
+				System.err.println("Error occurred while communicating with client...");
+				e.printStackTrace();
+			} catch (NumberFormatException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}  finally {
 				if(reader != null) {
 					try {
 						reader.close();
@@ -416,10 +403,16 @@ public class Node implements INodeCli, Runnable {
 		
 		private void sendLogsToCloudController() {
 //			List<ComputationRequestInfo> out = new ArrayList<>();
+			ObjectOutputStream outStream = null;
 			try {
-				ObjectOutputStream outStream = new ObjectOutputStream(socket.getOutputStream());
+				outStream = new ObjectOutputStream(socket.getOutputStream());
 				
-				for(String fname : namesOfLogFiles){
+				ComputationRequestInfo computationRequestInfo = new ComputationRequestInfo();
+				computationRequestInfo.setNodeName("test test");
+				outStream.writeObject(computationRequestInfo);
+				outStream.flush();
+				
+				/*for(String fname : namesOfLogFiles){
 					FileInputStream fstream = new FileInputStream(fname);				
 					BufferedReader fileReader = new BufferedReader(new InputStreamReader(fstream));
 					ComputationRequestInfo computationRequestInfo = new ComputationRequestInfo();
@@ -438,12 +431,21 @@ public class Node implements INodeCli, Runnable {
 					outStream.writeObject(computationRequestInfo);
 
 //					out.add(computationRequestInfo);
-				}		
+				}		*/
 			} catch (FileNotFoundException e) {
 				e.printStackTrace();
 			} catch (IOException e) {
 				e.printStackTrace();
-			}			
+			}	finally {
+				if(outStream != null) {
+					try {
+						outStream.close();
+					} catch (IOException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+				}
+			}
 //			return out;
 		}
 	}
