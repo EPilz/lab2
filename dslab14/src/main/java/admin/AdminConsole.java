@@ -13,17 +13,25 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.io.PrintWriter;
+import java.io.Serializable;
 import java.net.Socket;
 import java.rmi.NotBoundException;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
+import java.rmi.server.ExportException;
+import java.rmi.server.UnicastRemoteObject;
 import java.security.Key;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
+import java.util.SortedSet;
+import java.util.TreeSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -41,13 +49,11 @@ public class AdminConsole implements IAdminConsole, INotificationCallback, Runna
 	
 	private Socket socket;
 	private Shell shell;
-//	private ExecutorService pool;
 	
 	private IAdminConsole server;
 	
-	//callback object
-	private INotificationCallback callbackObj;
-
+	private INotificationCallback remote;
+	
 	/**
 	 * @param componentName
 	 *            the name of the component - represented in the prompt
@@ -65,17 +71,13 @@ public class AdminConsole implements IAdminConsole, INotificationCallback, Runna
 		this.userRequestStream = userRequestStream;
 		this.userResponseStream = userResponseStream;
 		
-//		this.pool = Executors.newCachedThreadPool();
-
-		// TODO
 		shell = new MyShell(componentName, userRequestStream, userResponseStream);
 		shell.register(this);
+			
 	}
 
 	@Override
 	public void run() {
-		// TODO
-		
 		// obtain registry that was created by the server
 		Registry registry;
 		try {
@@ -86,13 +88,6 @@ public class AdminConsole implements IAdminConsole, INotificationCallback, Runna
 			socket = new Socket(config.getString("controller.host"),
 					config.getInt("controller.rmi.port"));
 
-//			cloudReader = new BufferedReader(
-//					new InputStreamReader(socket.getInputStream()));
-//			
-//			cloudWriter = new PrintWriter(
-//					socket.getOutputStream(), true);
-			
-			
 			registry = LocateRegistry.getRegistry(
 					config.getString("controller.host"),
 					config.getInt("controller.rmi.port"));
@@ -102,62 +97,62 @@ public class AdminConsole implements IAdminConsole, INotificationCallback, Runna
 			server = (IAdminConsole) registry.lookup(config
 					.getString("binding.name"));
 		} catch (RemoteException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		} catch (NotBoundException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		} catch (IOException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
 		
 	}
 
-	@Override
-	@Command
+	@Override	
 	public boolean subscribe(String username, int credits,
 			INotificationCallback callback) throws RemoteException {
-		// TODO Auto-generated method stub
-		return false;
+		return server.subscribe(username, credits, callback);
+	}
+	
+	@Command
+	public String subscribe(String username, int credits) throws RemoteException {
+		try{
+			remote = (INotificationCallback) UnicastRemoteObject
+					.exportObject(this, 0);
+			if(subscribe(username, credits, remote)){				
+				return "Successfully subscribed for user " + username;
+			}
+			UnicastRemoteObject.unexportObject(this, true);
+			return "User not available";
+		} catch (ExportException e){
+			return "You can't subscribe for more than one user";
+		}
 	}
 
 	@Override
 	@Command
 	public List<ComputationRequestInfo> getLogs() throws RemoteException {
-		// TODO Auto-generated method stub
-		try {
-			shell.writeLine("command getLogs");
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
 		return server.getLogs();
 	}
 
 	@Override
 	@Command
 	public LinkedHashMap<Character, Long> statistics() throws RemoteException {
-		// TODO Auto-generated method stub
-//		LinkedHashMap<Character, Long> sorted = server.statistics();
-//		List list = new LinkedList(sorted.entrySet());
-//		Collections.sort(list, new Comparator() {
-//			@Override
-//			public int compare(Object o1, Object o2) {
-//				// TODO Auto-generated method stub
-//				return ((Comparable) o1.getValue().compareTo(o2.getValue()));
-//			}
-//
-//		});
-//		return sorted;
-		
-		return server.statistics();
+		LinkedHashMap<Character, Long> map = server.statistics();
+		List<Map.Entry<Character, Long>> entries = new ArrayList<Map.Entry<Character,Long>>(map.entrySet());
+		Collections.sort(entries, new Comparator<Map.Entry<Character, Long>>() {
+			public int compare(Map.Entry<Character, Long> a, Map.Entry<Character, Long> b){
+				return b.getValue().compareTo(a.getValue());
+			}
+		});
+		LinkedHashMap<Character, Long> sortedMap = new LinkedHashMap<Character, Long>();
+		for (Map.Entry<Character, Long> entry : entries) {
+			sortedMap.put(entry.getKey(), entry.getValue());
+		}
+		return sortedMap;
 	}
-
+	
 	//IGNORE
 	@Override
 	public Key getControllerPublicKey() throws RemoteException {
-		// TODO Auto-generated method stub
 		return null;
 	}
 
@@ -165,7 +160,6 @@ public class AdminConsole implements IAdminConsole, INotificationCallback, Runna
 	@Override
 	public void setUserPublicKey(String username, byte[] key)
 			throws RemoteException {
-		// TODO Auto-generated method stub
 	}
 
 	/**
@@ -181,7 +175,12 @@ public class AdminConsole implements IAdminConsole, INotificationCallback, Runna
 
 	@Override
 	public void notify(String username, int credits) throws RemoteException {
-		// TODO Auto-generated method stub
+		try {
+			UnicastRemoteObject.unexportObject(this, true);
+			shell.writeLine("Notification: " + username + " has less than " + credits + " credits.");
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
 		
 	}
 }

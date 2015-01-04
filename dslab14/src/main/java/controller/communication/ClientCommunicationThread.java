@@ -288,7 +288,8 @@ public class ClientCommunicationThread extends Thread {
 				}
 			}
 			
-			clientInfos.get(loggedInUser).minusCredits(countOfOperation * 50);			
+			clientInfos.get(loggedInUser).minusCredits(countOfOperation * 50);
+			cloudController.checkCredits(clientInfos.get(loggedInUser).getCredits(), clientInfos.get(loggedInUser).getName());
 			return value1;
 		}
 		

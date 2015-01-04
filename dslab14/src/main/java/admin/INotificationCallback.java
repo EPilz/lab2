@@ -1,5 +1,6 @@
 package admin;
 
+import java.io.Serializable;
 import java.rmi.Remote;
 import java.rmi.RemoteException;
 
@@ -12,7 +13,7 @@ import java.rmi.RemoteException;
  * Implementations of this interface get notified when a certain credit limit is
  * reached.
  */
-public interface INotificationCallback extends Remote {
+public interface INotificationCallback extends Remote, Serializable {
 	/**
 	 * Invoked to notify an admin that the credits of a certain user are below
 	 * the given threshold.

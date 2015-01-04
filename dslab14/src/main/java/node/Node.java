@@ -23,7 +23,9 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.ExecutorService;
@@ -58,7 +60,7 @@ public class Node implements INodeCli, Runnable {
 	private int current_resources;
 	private int new_resources;
 	
-	private List<String> namesOfLogFiles = new ArrayList<>();
+	private Map<String, String> namesOfLogFiles = new HashMap();
 	
 	private static ThreadLocal<SimpleDateFormat> dateFormater = new ThreadLocal<SimpleDateFormat>() {
 	 
@@ -338,10 +340,9 @@ public class Node implements INodeCli, Runnable {
 				}
 			} catch (IOException e) {
 //				der inputstream wirft immer eine IOException...
-				System.err.println("Error occurred while communicating with client...");
-				e.printStackTrace();
+//				System.err.println("Error occurred while communicating with client...");
+//				e.printStackTrace();
 			} catch (NumberFormatException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}  finally {
 				if(reader != null) {
@@ -388,8 +389,10 @@ public class Node implements INodeCli, Runnable {
 		}	
 		
 		private void writeLog(String term, String result) {
-			String fileName = logDir + dateFormater.get().format(new Date()) +  "_" + componentName + ".log";
-			namesOfLogFiles.add(fileName);
+			String timeStamp =  dateFormater.get().format(new Date());			
+			String fileName = logDir + timeStamp + "_" + componentName + ".log";
+			String fileContent = term + " = " + result;
+			namesOfLogFiles.put(timeStamp, fileContent);
 			BufferedWriter fileWriter;
 			try {
 				fileWriter = new BufferedWriter(new PrintWriter(fileName));
@@ -402,36 +405,14 @@ public class Node implements INodeCli, Runnable {
 		}
 		
 		private void sendLogsToCloudController() {
-//			List<ComputationRequestInfo> out = new ArrayList<>();
 			ObjectOutputStream outStream = null;
 			try {
 				outStream = new ObjectOutputStream(socket.getOutputStream());
-				
-				ComputationRequestInfo computationRequestInfo = new ComputationRequestInfo();
-				computationRequestInfo.setNodeName("test test");
-				outStream.writeObject(computationRequestInfo);
-				outStream.flush();
-				
-				/*for(String fname : namesOfLogFiles){
-					FileInputStream fstream = new FileInputStream(fname);				
-					BufferedReader fileReader = new BufferedReader(new InputStreamReader(fstream));
-					ComputationRequestInfo computationRequestInfo = new ComputationRequestInfo();
-					computationRequestInfo.setNodeName(componentName);
-					String timeStamp = fname.replace("_"+componentName+".log", "");
-					computationRequestInfo.setTimestamp(timeStamp);
-					
-					String strLine;
-					String fileContent = "";
-					while ((strLine = fileReader.readLine()) != null){
-					     fileContent += strLine;
-					}
-					fileContent = fileContent.replace("/n", "=");
-					computationRequestInfo.setFileContent(fileContent);
-
+				for(Map.Entry<String, String> logfile : namesOfLogFiles.entrySet()){
+					ComputationRequestInfo computationRequestInfo = new ComputationRequestInfo(logfile.getKey(), componentName, logfile.getValue());
 					outStream.writeObject(computationRequestInfo);
-
-//					out.add(computationRequestInfo);
-				}		*/
+					outStream.flush();
+				}		
 			} catch (FileNotFoundException e) {
 				e.printStackTrace();
 			} catch (IOException e) {
@@ -441,12 +422,10 @@ public class Node implements INodeCli, Runnable {
 					try {
 						outStream.close();
 					} catch (IOException e) {
-						// TODO Auto-generated catch block
 						e.printStackTrace();
 					}
 				}
 			}
-//			return out;
 		}
 	}
 

@@ -21,6 +21,7 @@ import java.rmi.registry.Registry;
 import java.rmi.server.UnicastRemoteObject;
 import java.security.Key;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -48,6 +49,10 @@ public class CloudController implements ICloudControllerCli, IAdminConsole, Runn
 	private NodeCommunicationThread nodeCommunicationThread;
 	private ServerSocket serverSocket;
 	private DatagramSocket datagramSocket;
+	
+	private HashMap<String, INotificationCallback> subscribedUsers = new HashMap<String, INotificationCallback>();
+	private HashMap<String, Integer> subscribedUsersLimits = new HashMap<String, Integer>();
+
 	
 	private boolean stop = true;
 	
@@ -205,37 +210,46 @@ public class CloudController implements ICloudControllerCli, IAdminConsole, Runn
 	@Override
 	public boolean subscribe(String username, int credits,
 			INotificationCallback callback) throws RemoteException {
-		return false;
+		try {
+			if(!users().contains(username)) return false;
+			subscribedUsers.put(username, callback);
+			subscribedUsersLimits.put(username, credits);
+		} catch (IOException e) {
+			e.printStackTrace();
+		}		
+		return true;
+	}
+	
+	public void checkCredits(long credits, String username){
+		if(subscribedUsersLimits.containsKey(username)){
+			int limit = subscribedUsersLimits.get(username);
+			if(credits < limit){
+				try {
+					subscribedUsers.get(username).notify(username, limit);
+					subscribedUsers.remove(username);
+					subscribedUsersLimits.remove(username);
+				} catch (RemoteException e) {
+					e.printStackTrace();
+				}
+			}
+		}
 	}
 
 	@Override
 	public List<ComputationRequestInfo> getLogs() throws RemoteException {
-		shell.writeLine("get Logs in cloud controller");
 		List<ComputationRequestInfo> out = new ArrayList<>();
 		Socket socket = null;
 		for (NodeInfo nodeInfo : nodeCommunicationThread.nodeInfos()) {
-			shell.writeLine("NodeInfo "+nodeInfo.getStatus() + " IP: " + nodeInfo.getIp() +" TCP: " +nodeInfo.getTcpPort());
 			if(nodeInfo.getStatus().equals(NodeInfo.Status.ONLINE)) {
 				try {					
 					socket = new Socket(InetAddress.getByName(nodeInfo.getIp()), nodeInfo.getTcpPort());					
-					shell.writeLine("Socket erstellt");
-					
-					//ObjectOutputStream objectOutputStream = new ObjectOutputStream(socket.getOutputStream());
 					PrintWriter writer = new PrintWriter(socket.getOutputStream(), true);
-					shell.writeLine("Outputstream erstellt");
-				//	objectOutputStream.flush();
-					
-					String s = "!getLogs";										
-					//objectOutputStream.writeChars(s);
-					writer.println(s);
+					writer.println("!getLogs");
 					ObjectInputStream objectInputStream = new ObjectInputStream(socket.getInputStream());			
-					
-					shell.writeLine("InputStream erstellt");
 					while(true){
 						try {
 							ComputationRequestInfo req = (ComputationRequestInfo) objectInputStream.readObject();
 							out.add(req);
-							System.out.println(req);
 						} catch(EOFException ex) {
 							break;
 						}
@@ -251,7 +265,6 @@ public class CloudController implements ICloudControllerCli, IAdminConsole, Runn
 						try {
 							socket.close();
 						} catch (IOException e) {
-							// TODO Auto-generated catch block
 							e.printStackTrace();
 						}
 					}

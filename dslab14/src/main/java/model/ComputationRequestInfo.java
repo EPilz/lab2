@@ -7,7 +7,6 @@ import java.io.Serializable;
  * in Lab 2. Hence, you do not have to implement it for the first submission.
  */
 public class ComputationRequestInfo implements Serializable {
-	// TODO: implement
 
 	private String timestamp;
 	private String nodeName;
@@ -23,7 +22,6 @@ public class ComputationRequestInfo implements Serializable {
 	}
 
 	public ComputationRequestInfo() {
-		// TODO Auto-generated constructor stub
 	}
 
 	public String getTimestamp() {
@@ -52,7 +50,6 @@ public class ComputationRequestInfo implements Serializable {
 
 	@Override
 	public String toString() {
-		// TODO Auto-generated method stub
-		return timestamp + "[" + nodeName + "]: " + fileContent;
+		return timestamp + " [" + nodeName.toLowerCase() + "]: " + fileContent;
 	}
 }
