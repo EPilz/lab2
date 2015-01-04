@@ -3,7 +3,6 @@ package controller.communication;
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
-import java.net.InetAddress;
 import java.net.SocketAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
@@ -15,6 +14,7 @@ import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.ConcurrentHashMap;
 
+import cli.MyShell;
 import controller.CloudController;
 import controller.info.NodeInfo;
 
@@ -29,15 +29,16 @@ public class NodeCommunicationThread extends Thread {
 	private int timeToOffline;
 	private int checkPeriod;
 	private int rmax;
+	
 
-	public NodeCommunicationThread(CloudController cloudController, DatagramSocket datagramSocket, int timeToOffline, int checkPeriod, int rmax) {
+	public NodeCommunicationThread(CloudController cloudController, DatagramSocket datagramSocket, int timeToOffline, int checkPeriod, int rmax, MyShell shell) {
 		this.cloudController = cloudController;
 		this.datagramSocket = datagramSocket;
 		this.timeToOffline = timeToOffline;
 		this.checkPeriod = checkPeriod;		
 		this.rmax = rmax;
 		
-		this.nodeInfos = new ConcurrentHashMap<>();		
+		this.nodeInfos = new ConcurrentHashMap<>();			
 	}
 	
 	public List<NodeInfo> nodeInfos() {

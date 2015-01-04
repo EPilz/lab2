@@ -7,6 +7,7 @@ import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.util.ArrayList;
@@ -22,10 +23,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import javax.crypto.Cipher;
+import javax.crypto.Mac;
 import javax.crypto.SecretKey;
 
 import org.bouncycastle.util.encoders.Base64;
 
+import cli.MyShell;
 import util.Base64Channel;
 import util.Channel;
 import util.Channel.NotConnectedException;
@@ -45,18 +48,23 @@ public class ClientCommunicationThread extends Thread {
 	private Config controllerConfig;
 	private Config userConfig;
 	private CloudController cloudController;
+	private Mac hMac;
+	private MyShell shell;
 	
 	private Map<String, ClientInfo> clientInfos;
 	private CopyOnWriteArrayList<Channel> activeChannels;
 	private LinkedHashMap<Character, Long> usageOfOperators = new LinkedHashMap<>();
 	
-	public ClientCommunicationThread(CloudController cloudController, ServerSocket serverSocket, Config controllerConfig, Config userConfig) {
+	public ClientCommunicationThread(CloudController cloudController, ServerSocket serverSocket, Config controllerConfig, Config userConfig, Mac hMac, MyShell shell) {
 		this.cloudController = cloudController;
 		this.serverSocket = serverSocket;
 		this.pool = Executors.newCachedThreadPool();
 		this.controllerConfig = controllerConfig;
 		this.userConfig = userConfig;
 		this.activeChannels =  new CopyOnWriteArrayList<>();
+		
+		this.hMac = hMac;
+		this.shell = shell;
 		
 		initClientInfos();
 	}
@@ -269,16 +277,39 @@ public class ClientCommunicationThread extends Thread {
 						nodeReader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 						nodeWriter = new PrintWriter(socket.getOutputStream(), true);	
 						
-						nodeWriter.println("!compute " + value1 + " " + operation + " " + value2);	
-						value1 = nodeReader.readLine();	
+						String computeTask = "!compute " + value1 + " " + operation + " " + value2;
+						hMac.update(computeTask.getBytes());						
+						byte[] hash = hMac.doFinal();
 						
-						countOfOperation++;
+						byte[] encodeHash = Base64.encode(hash);
+	
+						nodeWriter.println(new String(encodeHash) + " " +computeTask);	
+						value1 = nodeReader.readLine();							
 						
 						if(value1.startsWith("Error")) {
 							break;
+						} else if(value1.contains("!tampered")) {
+							int index = value1.indexOf("!compute");				
+							String term = value1.substring(index, value1.length()).trim();
+							value1 = "Term " + term + " tampered during the transmission!";
+							break;
+						} else if(value1.contains("!result")) {						
+							int index = value1.indexOf("!result");
+							String strEncodeHash = value1.substring(0, index).trim();		
+							String term = value1.substring(index, value1.length()).trim();
+							
+							if(verifyHash(strEncodeHash, term)) {
+								value1 = term.replaceAll("!result", "").trim();
+								n.addUsage(value1.length() * 50);
+								countOfOperation++;
+							} else {
+								value1 = "Result Term " + term.trim() + " tampered during the transmission!";
+								break;
+							}
 						} else {
-							n.addUsage(value1.length() * 50);
-						}						
+							value1 = "Unknown command received: " + value1;
+							break;
+						}
 					} catch (Exception e) {
 						return "Error: Node Timeout";
 					} finally {
@@ -295,6 +326,15 @@ public class ClientCommunicationThread extends Thread {
 			
 			clientInfos.get(loggedInUser).minusCredits(countOfOperation * 50);			
 			return value1;
+		}
+		
+		private boolean verifyHash(String encodeHash, String term) {
+			byte[] receivedHash = Base64.decode(encodeHash);
+			
+			hMac.update(term.getBytes());						
+			byte[] computedHash = hMac.doFinal();
+
+			return MessageDigest.isEqual(computedHash, receivedHash);
 		}
 		
 		public String list() {

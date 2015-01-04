@@ -3,16 +3,13 @@ package node;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.PrintStream;
 import java.io.PrintWriter;
-import java.net.ConnectException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
@@ -20,6 +17,10 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
 import java.net.UnknownHostException;
+import java.security.InvalidKeyException;
+import java.security.Key;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -31,17 +32,24 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+import javax.crypto.Mac;
+
 import model.ComputationRequestInfo;
 
 import org.apache.commons.logging.LogFactory;
+import org.bouncycastle.util.encoders.Base64;
 
-import controller.info.NodeInfo;
 import util.Config;
+import util.Keys;
 import cli.Command;
 import cli.MyShell;
-import cli.Shell;
 
 public class Node implements INodeCli, Runnable {
+	
+	private static final String ALGORITHM = "HmacSHA256";
+	
+	private Key secretKey;
+	private Mac hMac;
 
 	private String componentName;
 	private Config config;
@@ -96,6 +104,23 @@ public class Node implements INodeCli, Runnable {
 		
 		shell = new MyShell(componentName, userRequestStream, userResponseStream);
 		shell.register(this);		
+		
+		try {
+			this.secretKey = Keys.readSecretKey(new File(config.getString("hmac.key")));
+		} catch (IOException e) {
+			shell.writeLine("cannot read the secret Key...");
+			e.printStackTrace();
+		}
+
+		try {
+			this.hMac = Mac.getInstance(ALGORITHM);
+			hMac.init(secretKey);
+		} catch (NoSuchAlgorithmException e) {
+			shell.writeLine("algorithm for mac is invalid...");
+		} catch (InvalidKeyException e) {
+			shell.writeLine("cannot init mac with the secret Key...");
+			e.printStackTrace();
+		}
 	}
 	
 	private void createDir() {
@@ -308,8 +333,20 @@ public class Node implements INodeCli, Runnable {
 				String request = "";
 
 				while ((request = reader.readLine()) != null) {		
-					if(request.startsWith("!compute")) {
-						writer.println(calculate(request.replaceAll("!compute", "").trim()));
+					if(request.contains("!compute")) {
+						int index = request.indexOf("!compute");
+						String encodeHash = request.substring(0, index).trim();		
+						String term = request.substring(index, request.length()).trim();
+						if(verifyHash(encodeHash, term)) {
+							String result = "!result " + calculate(term.replaceAll("!compute", "").trim());
+							hMac.update(result.getBytes());	
+							writer.println(new String(Base64.encode(hMac.doFinal())) + " " + result);
+						} else {
+							shell.writeLine("Hash Code invalid from Term: " + term);
+							String message = "!tampered " + term; 
+							hMac.update(message.getBytes());						
+							writer.println(new String(Base64.encode(hMac.doFinal())) + " " + message);
+						}
 					} else if(request.startsWith("!share")) {
 						int resourceLevel = Integer.parseInt(request.trim().split("\\s+")[1]);
 						new_resources = resourceLevel;
@@ -387,6 +424,15 @@ public class Node implements INodeCli, Runnable {
 			writeLog(term, result);
 			return result;
 		}	
+		
+		private boolean verifyHash(String encodeHash, String term) {
+			byte[] receivedHash = Base64.decode(encodeHash);
+			
+			hMac.update(term.getBytes());						
+			byte[] computedHash = hMac.doFinal();
+
+			return MessageDigest.isEqual(computedHash, receivedHash);
+		}
 		
 		private void writeLog(String term, String result) {
 			String fileName = logDir + dateFormater.get().format(new Date()) +  "_" + componentName + ".log";
