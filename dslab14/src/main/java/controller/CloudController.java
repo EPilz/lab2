@@ -1,12 +1,10 @@
 package controller;
 
-import java.io.BufferedReader;
 import java.io.EOFException;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.net.DatagramSocket;
@@ -19,7 +17,9 @@ import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 import java.rmi.server.UnicastRemoteObject;
+import java.security.InvalidKeyException;
 import java.security.Key;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -27,18 +27,25 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Set;
 
+import javax.crypto.Mac;
+
 import model.ComputationRequestInfo;
-import admin.INotificationCallback;
 import util.Config;
+import util.Keys;
+import admin.INotificationCallback;
 import cli.Command;
 import cli.MyShell;
-import cli.Shell;
 import controller.communication.ClientCommunicationThread;
 import controller.communication.NodeCommunicationThread;
 import controller.info.ClientInfo;
 import controller.info.NodeInfo;
 
 public class CloudController implements ICloudControllerCli, IAdminConsole, Runnable {
+	
+	private static final String ALGORITHM = "HmacSHA256";
+	
+	private Key secretKey;
+	private Mac mac;
 
 	private String componentName;
 	private Config config;
@@ -78,14 +85,32 @@ public class CloudController implements ICloudControllerCli, IAdminConsole, Runn
 	@Override
 	public void run() {
 		Config userConfig = new Config("user");
+		
+		try {
+			this.secretKey = Keys.readSecretKey(new File(config.getString("hmac.key")));
+		} catch (IOException e) {
+			shell.writeLine("cannot read the secret Key...");
+			e.printStackTrace();
+		}
+
+		try {
+			this.mac = Mac.getInstance(ALGORITHM);
+			mac.init(secretKey);
+		} catch (NoSuchAlgorithmException e) {
+			shell.writeLine("algorithm for mac is invalid...");
+		} catch (InvalidKeyException e) {
+			shell.writeLine("cannot init mac with the secret Key...");
+			e.printStackTrace();
+		}	
+		
 		try {
 			serverSocket = new ServerSocket(config.getInt("tcp.port"));
-			clientCommunicationThread = new ClientCommunicationThread(this, serverSocket, userConfig);
+			clientCommunicationThread = new ClientCommunicationThread(this, serverSocket, config, userConfig, mac, shell);
 			clientCommunicationThread.start();
 			
 			datagramSocket = new DatagramSocket(config.getInt("udp.port"));
 			nodeCommunicationThread = new NodeCommunicationThread(this, datagramSocket, 
-					config.getInt("node.timeout"), config.getInt("node.checkPeriod"), config.getInt("controller.rmax"));
+					config.getInt("node.timeout"), config.getInt("node.checkPeriod"), config.getInt("controller.rmax"), shell);
 			nodeCommunicationThread.start();
 						
 			new Thread(shell).start();
@@ -105,6 +130,8 @@ public class CloudController implements ICloudControllerCli, IAdminConsole, Runn
 			throw new RuntimeException(
 					"Error while binding remote object to registry.", e);
 		}
+		
+		
 	
 		shell.writeLine("Controller " + componentName + " is online!");
 	}

@@ -1,27 +1,35 @@
 package client;
 
-import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.PrintStream;
-import java.io.PrintWriter;
-import java.net.Socket;
-import java.net.UnknownHostException;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.util.Arrays;
+
+import javax.crypto.Cipher;
+
+import org.bouncycastle.util.encoders.Base64;
 
 import cli.Command;
-import cli.Shell;
+import cli.MyShell;
+import util.Base64Channel;
+import util.Channel;
+import util.Channel.NotConnectedException;
 import util.Config;
+import util.Keys;
+import util.SecureChannel;
+import util.SecurityUtil;
 
 public class Client implements IClientCli, Runnable {
-
+	private final String B64 = "a-zA-Z0-9/+";
+	
 	private String componentName;
 	private Config config;
 	
-	private Shell shell;
-	private Socket socket;
-	private BufferedReader cloudReader;
-	PrintWriter cloudWriter;
+	private MyShell shell;
+	private Channel channelToCC;
 
 	/**
 	 * @param componentName
@@ -38,121 +46,85 @@ public class Client implements IClientCli, Runnable {
 		this.componentName = componentName;
 		this.config = config;
 
-		shell = new Shell(componentName, userRequestStream, userResponseStream);
+		shell = new MyShell(componentName, userRequestStream, userResponseStream);
 		shell.register(this);
+		
 	}
 
 	@Override
 	public void run() {
-		try {
 			shell.writeLine("Client " + componentName + " is started!");
-		} catch (IOException e) { }
 		
-		try {			
-			
 			new Thread(shell).start();	
-			
-			socket = new Socket(config.getString("controller.host"),
-					config.getInt("controller.tcp.port"));
-
-			cloudReader = new BufferedReader(
-					new InputStreamReader(socket.getInputStream()));
-			
-			cloudWriter = new PrintWriter(
-					socket.getOutputStream(), true);		
-		} catch (UnknownHostException e) {
-			writeToShell("Error: cannot connect to cloud controller");
-			try {
-				exit();
-			} catch (IOException e1) { }
-		} catch (IOException e) {
-			writeToShell("Error: cannot connect to cloud controller");
-			try {
-				exit();
-			} catch (IOException e1) { }
-		} 
 	}
 	
 	
-	public void writeToShell(String text) {
-		try {
-			shell.writeLine(text);
-		} catch (IOException e) {  }
-	}
-	
-	private String sentToCloudController(String message) {
-		if(cloudWriter != null) {
-			cloudWriter.println(message);
+	private String sendToCloudController(String message) {
+		if(channelToCC != null && channelToCC.isConnected()) {
 			try {
-				String response = cloudReader.readLine();
+				channelToCC.sendMessage(message);
+				String response = channelToCC.readMessage();
 				if(response == null) {
 					return "Error: CloudController unreachable";
 				}
 				return response;
+			} catch (NotConnectedException e) {
+				return "Error: not connected";
 			} catch (Exception e) {
 				return "Error: while read from CloudController";
 			}
 		} else {
-			return "Error: not connect to cloud controller";
+			return "Error: not connected to cloud controller";
 		}
 	}
 
 
 	@Override
-	@Command
+	@Deprecated
 	public String login(String username, String password) throws IOException {		
-		return sentToCloudController("login " + username + " " + password);							
+		return sendToCloudController("login " + username + " " + password);							
 	}
 
 	@Override
 	@Command
 	public String logout() throws IOException {
-		return sentToCloudController("logout");				
+		return sendToCloudController("logout");				
 	}
 
 	@Override
 	@Command
 	public String credits() throws IOException {
-		return sentToCloudController("credits");
+		return sendToCloudController("credits");
 	}
 
 	@Override
 	@Command
 	public String buy(long credits) throws IOException {
-		return sentToCloudController("buy " + credits);
+		return sendToCloudController("buy " + credits);
 	}
 
 	@Override
 	@Command
 	public String list() throws IOException {
-		return sentToCloudController("list");
+		return sendToCloudController("list");
 	}
 
 	@Override
 	@Command
 	public String compute(String term) throws IOException {
-		return sentToCloudController("compute " + term);
+		return sendToCloudController("compute " + term);
 	}
 
 	@Override
 	@Command
-	public String exit() throws IOException {		
-		if (socket != null && !socket.isClosed()) {	
+	public String exit() throws IOException {	
+		if (channelToCC != null && channelToCC.isConnected()) {	
 			try {
 				logout();
 			} catch(Exception ex) { }
-			socket.close();			
+			channelToCC.close();			
 		}
-
-		if(cloudWriter != null) {			
-			cloudWriter.close();
-		}
-		
-		if(cloudReader != null) {
-			cloudReader.close();
-		}	
 		shell.close();		
-		
 		return "Shut down completed! Bye ..";
 	}
 
@@ -169,9 +141,100 @@ public class Client implements IClientCli, Runnable {
 	// implement them for the first submission. ---
 
 	@Override
+	@Command
 	public String authenticate(String username) throws IOException {
-		// TODO Auto-generated method stub
-		return null;
+		//Check if already connected
+		if(channelToCC != null && channelToCC.isConnected())
+			return "You are already connected and authenticated";
+		
+		//Create Channel
+		channelToCC = new Base64Channel();
+		boolean connected = channelToCC.connect(config.getString("controller.host"), config.getInt("controller.tcp.port"));
+		if(!connected)
+			return "Error: cannot connect to cloud controller";
+		
+		//Send challenge to controller
+		byte[] challenge = SecurityUtil.createBase64Challenge();
+		boolean ok = sendChallenge(username, challenge);
+		if(!ok)
+		{
+			channelToCC.close();
+			return "Error: cannot connect to cloud controller";
+		}
+		ok = readAndProcessAnswer(username, challenge);
+		if(!ok)
+		{
+			channelToCC.close();
+			return "Error: cannot connect to cloud controller";
+		}
+		//Return result
+		return "Successfully authenticated";
+	}
+	
+	private boolean sendChallenge(String username, byte[] challenge)
+	{
+		File publicKeyOfController = new File(config.getString("controller.key"));
+		
+		//Create unencrypted message
+		String unencryptedMessage = String.format("!authenticate %s %s", username, new String(challenge));
+		
+		//Encrypt message using public key of host
+		try {
+			PublicKey publicKey = Keys.readPublicPEM(publicKeyOfController);
+			Cipher cipher = Cipher.getInstance("RSA/NONE/OAEPWithSHA256AndMGF1Padding");
+			cipher.init(Cipher.ENCRYPT_MODE, publicKey);
+			byte[] encryptedMessage = cipher.doFinal(unencryptedMessage.getBytes());
+			channelToCC.sendMessage(encryptedMessage);
+		}
+		catch (Exception e) { 
+			e.printStackTrace();  //TODO: delete
+			return false;
+		}
+		return true;
 	}
 
+	private boolean readAndProcessAnswer(String username, byte[] givenChallenge)
+	{
+		try{
+			//Read message from client
+			byte[] encryptedMessage = channelToCC.readByteMessage();
+			File ownPrivateKey = new File(config.getString("keys.dir") + "/" + username + ".pem");
+			
+			//Decrypt it
+			PrivateKey privateKey = Keys.readPrivatePEM(ownPrivateKey);
+			Cipher privateCipher = Cipher.getInstance("RSA/NONE/OAEPWithSHA256AndMGF1Padding");
+			privateCipher.init(Cipher.DECRYPT_MODE, privateKey);
+			byte[] decryptedMessage = privateCipher.doFinal(encryptedMessage);
+			String message = new String(decryptedMessage);
+			assert message.matches("!ok ["+B64+"]{43}= ["+B64+"]{43}= ["+B64+"]{43}= ["+B64+"]{22}==") : "2nd message";
+			System.out.println(message);
+			
+			//Split to parts
+			String[] messageParts = message.split(" ");
+			byte[] userChallengeAnswer = messageParts[1].getBytes();
+			String controllerChallenge = messageParts[2];
+			byte[] secretKey = Base64.decode(messageParts[3].getBytes());
+			byte[] ivParam = Base64.decode(messageParts[4].getBytes());
+			
+			System.out.println("Given challenge: " + new String(givenChallenge));
+			System.out.println("Answer: " + new String(userChallengeAnswer));
+			System.out.println("Equals: " + Arrays.equals(givenChallenge, userChallengeAnswer));
+			//Check the sent user challenge
+			if(!Arrays.equals(givenChallenge, userChallengeAnswer))
+				return false;
+			System.out.println("Challenge ok");
+			//Create SecureChannel with secret key and ivParam
+			channelToCC = new SecureChannel((Base64Channel) channelToCC, secretKey, ivParam);
+			
+			//Send controller challenge back over secure channel
+			channelToCC.sendMessage(controllerChallenge);
+			System.out.println("Send first AES message");
+		}
+		catch(Exception e)
+		{
+			e.printStackTrace(); //TODO: delete
+			return false;
+		}
+		return true;
+	}
 }
