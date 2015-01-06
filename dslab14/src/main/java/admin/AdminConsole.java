@@ -178,12 +178,15 @@ public class AdminConsole implements IAdminConsole, INotificationCallback, Runna
 		}		
 	}
 	
+	@Command
 	public void exit(){
 		try {
 			UnicastRemoteObject.unexportObject(this, true);
+			socket.close();
 			shell.close();		
-			
+			Thread.currentThread().interrupt();
 		} catch (NoSuchObjectException e) {
+		} catch (IOException e) {
 		}
 		
 	}

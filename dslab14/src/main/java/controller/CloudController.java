@@ -199,9 +199,9 @@ public class CloudController implements ICloudControllerCli, IAdminConsole, Runn
 	public String exit() throws IOException {
 		stop = false;
 		
-		if(!subscribedUsersLimits.isEmpty()) callback.exit(); 
-		
 		clientCommunicationThread.shutdown();
+		
+		UnicastRemoteObject.unexportObject(registry, true);
 		
 		shell.close();		
 		
