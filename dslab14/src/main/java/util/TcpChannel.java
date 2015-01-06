@@ -60,9 +60,9 @@ public class TcpChannel implements Channel {
 		if(isConnected)
 		{
 			try {
+				socket.close();
 				reader.close();
 				writer.close();
-				socket.close();
 			} catch (IOException e) { }
 		}
 		isConnected = false;

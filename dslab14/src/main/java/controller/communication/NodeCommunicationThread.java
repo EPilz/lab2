@@ -89,7 +89,7 @@ public class NodeCommunicationThread extends Thread {
 		DatagramPacket packet;
 		
 		try {
-			while (cloudController.isStop()) {
+			while (!cloudController.isStop()) {
 				buffer = new byte[1024];
 				packet = new DatagramPacket(buffer, buffer.length);
 
@@ -116,7 +116,6 @@ public class NodeCommunicationThread extends Thread {
 				}
 			}
 		} catch (IOException e) { 
-			System.out.println();
 		} finally {
 			if (datagramSocket != null && !datagramSocket.isClosed()) {
 				datagramSocket.close();

@@ -31,6 +31,8 @@ public class Client implements IClientCli, Runnable {
 	private MyShell shell;
 	private Channel channelToCC;
 
+	private String loggedInUser;
+
 	/**
 	 * @param componentName
 	 *            the name of the component - represented in the prompt
@@ -88,7 +90,10 @@ public class Client implements IClientCli, Runnable {
 	@Override
 	@Command
 	public String logout() throws IOException {
-		return sendToCloudController("logout");				
+		String toPrint = sendToCloudController("logout");
+		channelToCC.close();
+		loggedInUser = null;
+		return toPrint;				
 	}
 
 	@Override
@@ -145,7 +150,13 @@ public class Client implements IClientCli, Runnable {
 	public String authenticate(String username) throws IOException {
 		//Check if already connected
 		if(channelToCC != null && channelToCC.isConnected())
-			return "You are already connected and authenticated";
+			return "You are already connected and authenticated as " + loggedInUser;
+		
+		File ownPrivateKey = new File(config.getString("keys.dir") + "/" + username + ".pem");
+		if(!ownPrivateKey.exists())
+		{
+			return "Error: An username " + username + " is unknown!";
+		}
 		
 		//Create Channel
 		channelToCC = new Base64Channel();
@@ -161,13 +172,14 @@ public class Client implements IClientCli, Runnable {
 			channelToCC.close();
 			return "Error: cannot connect to cloud controller";
 		}
-		ok = readAndProcessAnswer(username, challenge);
+		ok = readAndProcessAnswer(username, challenge, ownPrivateKey);
 		if(!ok)
 		{
 			channelToCC.close();
 			return "Error: cannot connect to cloud controller";
 		}
 		//Return result
+		loggedInUser = username;
 		return "Successfully authenticated";
 	}
 	
@@ -193,12 +205,11 @@ public class Client implements IClientCli, Runnable {
 		return true;
 	}
 
-	private boolean readAndProcessAnswer(String username, byte[] givenChallenge)
+	private boolean readAndProcessAnswer(String username, byte[] givenChallenge, File ownPrivateKey)
 	{
 		try{
 			//Read message from client
 			byte[] encryptedMessage = channelToCC.readByteMessage();
-			File ownPrivateKey = new File(config.getString("keys.dir") + "/" + username + ".pem");
 			
 			//Decrypt it
 			PrivateKey privateKey = Keys.readPrivatePEM(ownPrivateKey);
@@ -207,7 +218,6 @@ public class Client implements IClientCli, Runnable {
 			byte[] decryptedMessage = privateCipher.doFinal(encryptedMessage);
 			String message = new String(decryptedMessage);
 			assert message.matches("!ok ["+B64+"]{43}= ["+B64+"]{43}= ["+B64+"]{43}= ["+B64+"]{22}==") : "2nd message";
-			System.out.println(message);
 			
 			//Split to parts
 			String[] messageParts = message.split(" ");
@@ -216,19 +226,14 @@ public class Client implements IClientCli, Runnable {
 			byte[] secretKey = Base64.decode(messageParts[3].getBytes());
 			byte[] ivParam = Base64.decode(messageParts[4].getBytes());
 			
-			System.out.println("Given challenge: " + new String(givenChallenge));
-			System.out.println("Answer: " + new String(userChallengeAnswer));
-			System.out.println("Equals: " + Arrays.equals(givenChallenge, userChallengeAnswer));
 			//Check the sent user challenge
 			if(!Arrays.equals(givenChallenge, userChallengeAnswer))
 				return false;
-			System.out.println("Challenge ok");
 			//Create SecureChannel with secret key and ivParam
 			channelToCC = new SecureChannel((Base64Channel) channelToCC, secretKey, ivParam);
 			
 			//Send controller challenge back over secure channel
 			channelToCC.sendMessage(controllerChallenge);
-			System.out.println("Send first AES message");
 		}
 		catch(Exception e)
 		{

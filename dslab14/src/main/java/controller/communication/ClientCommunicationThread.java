@@ -54,6 +54,8 @@ public class ClientCommunicationThread extends Thread {
 	private Map<String, ClientInfo> clientInfos;
 	private CopyOnWriteArrayList<Channel> activeChannels;
 	private LinkedHashMap<Character, Long> usageOfOperators = new LinkedHashMap<>();
+
+	private boolean isShutdown;
 	
 	public ClientCommunicationThread(CloudController cloudController, ServerSocket serverSocket, Config controllerConfig, Config userConfig, Mac hMac, MyShell shell) {
 		this.cloudController = cloudController;
@@ -91,7 +93,7 @@ public class ClientCommunicationThread extends Thread {
 	}
 
 	public void run() {
-		while (cloudController.isStop()) {
+		while (!cloudController.isStop()) {
 			try {
 				Socket socket = serverSocket.accept();
 				ClientConnectionThread clientConnectionThread = new ClientConnectionThread(controllerConfig, socket);
@@ -104,9 +106,12 @@ public class ClientCommunicationThread extends Thread {
 	}
 	
 	public void shutdown() {
+		isShutdown = true;
 		for (Channel channel : activeChannels) {
-			if(channel != null)
+			if(channel != null && channel.isConnected())
+			{
 				channel.close();			
+			}
 		}
 		for (ClientInfo clientInfo : clientInfos.values()) {
 			clientInfo.setStatus(ClientInfo.Status.OFFLINE);
@@ -124,21 +129,26 @@ public class ClientCommunicationThread extends Thread {
 		
 		public ClientConnectionThread(Config controllerConfig, Socket socket) { 
 			this.channel = new Base64Channel(socket);
-			
-			String keysDir = controllerConfig.getString("keys.dir");
-			File privateKey = new File(controllerConfig.getString("key"));
-			
-			readAndAnswerChallenge(privateKey, keysDir);
 		}	
 
 		@Override
 		public void run() {
+			String keysDir = controllerConfig.getString("keys.dir");
+			File privateKey = new File(controllerConfig.getString("key"));
+			
+			boolean authenticated = processAuthentication(privateKey, keysDir);
+			if(!authenticated)
+			{
+				shell.writeLine("Error: an authentication failed");
+				if(channel.isConnected())
+					channel.close();
+				return;
+			}
+			
 			try {
 				String request;
-				while ((request = getChannel().readMessage()) != null) {		
-					if(request.startsWith("login")) {
-						getChannel().sendMessage(login(request));
-					} else if(request.startsWith("logout")) {
+				while (channel.isConnected() && (request = channel.readMessage()) != null) {		
+					if(request.startsWith("logout")) {
 						getChannel().sendMessage(logout());
 					} else if(request.startsWith("credits")) {
 						getChannel().sendMessage(credits());
@@ -153,7 +163,8 @@ public class ClientCommunicationThread extends Thread {
 					}	
 				}
 			} catch (IOException e) { 
-				e.printStackTrace();
+				if(!isShutdown)
+					shell.writeLine("Error: while reading from client");
 			} catch (NotConnectedException e) {
 				e.printStackTrace();
 			} 
@@ -171,42 +182,6 @@ public class ClientCommunicationThread extends Thread {
 			
 		}
 		
-		private boolean checkUser(String username, String pw) {
-			if(userConfig.containsKey(username + ".password")) {
-				String password = userConfig.getString(username + ".password");
-				if (password == null) {
-					return false;
-				}
-	
-				if (password.equals(pw)) {
-					return true;
-				}
-			}
-			return false;
-		}
-		
-		private String login(String request) {
-			if (loggedInUser != null) {
-				return "You are already logged in!";
-			}
-		
-			String[] array = request.split(" ");
-			if (array.length != 3) {
-				return "Wrong format!";
-			} else {
-			
-				if(checkUser(array[1], array[2])) {					
-					if(clientInfos.get(array[1]).getStatus() == ClientInfo.Status.ONLINE) {
-						return "User " + array[1] + " alread logged in on other Socket!";						
-					}
-					loggedInUser = array[1];
-					clientInfos.get(loggedInUser).setStatus(ClientInfo.Status.ONLINE);					
-					return "Successfully logged in!";
-				}
-				return "Wrong username/password combination!";
-			}		
-		}
-
 		public String logout() {		
 			if (loggedInUser == null) {
 				return "You have to login first!";
@@ -350,7 +325,7 @@ public class ClientCommunicationThread extends Thread {
 			return channel;
 		}
 		
-		private void readAndAnswerChallenge(File privateKeyFile, String keysDir)
+		private boolean processAuthentication(File privateKeyFile, String keysDir)
 		{
 			try {
 				//Read message from client
@@ -362,12 +337,17 @@ public class ClientCommunicationThread extends Thread {
 				byte[] decryptedMessage = privateCipher.doFinal(encryptedMessage);
 				String message = new String(decryptedMessage);
 				assert message.matches("!authenticate \\w+ ["+B64+"]{43}=") : "1st message";
-				System.out.println(message);
 				String[] messageParts = message.split(" ");
 				
 				//Prepare answer
 				String username = messageParts[1];
 				File publicKeyOfUser = new File(keysDir + "/" + username + ".pub.pem");
+				if(!publicKeyOfUser.exists())
+				{
+					shell.writeLine("Error: " + username + " does not exist");
+					channel.close();
+					return false;
+				}
 				
 				String clientChallenge = messageParts[2];
 				byte[] controllerChallenge = SecurityUtil.createBase64Challenge();
@@ -382,23 +362,26 @@ public class ClientCommunicationThread extends Thread {
 				publicCipher.init(Cipher.ENCRYPT_MODE, publicKey);
 				byte[] encryptedAnswer = publicCipher.doFinal(answer.getBytes());
 				channel.sendMessage(encryptedAnswer);
-				System.out.println("Send ok! message");
 				//Create secure channel
 				channel = new SecureChannel((Base64Channel) channel, key, ivParam);
-				System.out.println("Created secure channel");
 				//Read controller challenge and check it
 				byte[] controllerChallengeAnswer = channel.readByteMessage();
-				System.out.println("Read message: " + new String(controllerChallenge));
 				if(!Arrays.equals(controllerChallengeAnswer, controllerChallenge))
+				{
 					channel.close();
+					return false;
+				}
 				else //Login user
 				{
 					loggedInUser = username;
 					clientInfos.get(loggedInUser).setStatus(ClientInfo.Status.ONLINE);
 				}
 			} catch (Exception e) {
-				e.printStackTrace(); //TODO: delete
+				channel.close();
+				return false;
 			}
+			
+			return true;
 		}
 		
 		private void updateUsageOfOperators(String operators){

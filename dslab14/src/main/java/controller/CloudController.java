@@ -13,6 +13,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.UnknownHostException;
 import java.rmi.AlreadyBoundException;
+import java.rmi.NotBoundException;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
@@ -61,7 +62,7 @@ public class CloudController implements ICloudControllerCli, IAdminConsole, Runn
 	private HashMap<String, Integer> subscribedUsersLimits = new HashMap<String, Integer>();
 
 	
-	private boolean stop = true;
+	private boolean stop = false;
 	
 	/**
 	 * @param componentName
@@ -197,11 +198,14 @@ public class CloudController implements ICloudControllerCli, IAdminConsole, Runn
 	@Override
 	@Command
 	public String exit() throws IOException {
-		stop = false;
+		stop = true;
 		
 		clientCommunicationThread.shutdown();
 		
-		UnicastRemoteObject.unexportObject(registry, true);
+		try {
+			LocateRegistry.getRegistry(config.getInt("controller.rmi.port")).unbind(config.getString("binding.name"));
+		} catch (NotBoundException e1) { }
+		UnicastRemoteObject.unexportObject(this, true);
 		
 		shell.close();		
 		
