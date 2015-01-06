@@ -56,8 +56,8 @@ public class CloudController implements ICloudControllerCli, IAdminConsole, Runn
 	private NodeCommunicationThread nodeCommunicationThread;
 	private ServerSocket serverSocket;
 	private DatagramSocket datagramSocket;
-	
-	private HashMap<String, INotificationCallback> subscribedUsers = new HashMap<String, INotificationCallback>();
+
+	private INotificationCallback callback;
 	private HashMap<String, Integer> subscribedUsersLimits = new HashMap<String, Integer>();
 
 	
@@ -197,7 +197,9 @@ public class CloudController implements ICloudControllerCli, IAdminConsole, Runn
 	@Override
 	@Command
 	public String exit() throws IOException {
-		stop = false;		
+		stop = false;
+		
+		if(!subscribedUsersLimits.isEmpty()) callback.exit(); 
 		
 		clientCommunicationThread.shutdown();
 		
@@ -239,7 +241,7 @@ public class CloudController implements ICloudControllerCli, IAdminConsole, Runn
 			INotificationCallback callback) throws RemoteException {
 		try {
 			if(!users().contains(username)) return false;
-			subscribedUsers.put(username, callback);
+			this.callback = callback;
 			subscribedUsersLimits.put(username, credits);
 		} catch (IOException e) {
 			e.printStackTrace();
@@ -252,8 +254,7 @@ public class CloudController implements ICloudControllerCli, IAdminConsole, Runn
 			int limit = subscribedUsersLimits.get(username);
 			if(credits < limit){
 				try {
-					subscribedUsers.get(username).notify(username, limit);
-					subscribedUsers.remove(username);
+					callback.notify(username, limit);
 					subscribedUsersLimits.remove(username);
 				} catch (RemoteException e) {
 					e.printStackTrace();

@@ -15,6 +15,7 @@ import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.Serializable;
 import java.net.Socket;
+import java.rmi.NoSuchObjectException;
 import java.rmi.NotBoundException;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
@@ -78,7 +79,6 @@ public class AdminConsole implements IAdminConsole, INotificationCallback, Runna
 
 	@Override
 	public void run() {
-		// obtain registry that was created by the server
 		Registry registry;
 		try {
 			shell.writeLine("Adminconsole: " + " is online! Enter command.");
@@ -88,6 +88,7 @@ public class AdminConsole implements IAdminConsole, INotificationCallback, Runna
 			socket = new Socket(config.getString("controller.host"),
 					config.getInt("controller.rmi.port"));
 
+			// obtain registry that was created by the server
 			registry = LocateRegistry.getRegistry(
 					config.getString("controller.host"),
 					config.getInt("controller.rmi.port"));
@@ -114,17 +115,12 @@ public class AdminConsole implements IAdminConsole, INotificationCallback, Runna
 	
 	@Command
 	public String subscribe(String username, int credits) throws RemoteException {
-		try{
-			remote = (INotificationCallback) UnicastRemoteObject
-					.exportObject(this, 0);
-			if(subscribe(username, credits, remote)){				
-				return "Successfully subscribed for user " + username;
-			}
-			UnicastRemoteObject.unexportObject(this, true);
-			return "User not available";
-		} catch (ExportException e){
-			return "You can't subscribe for more than one user";
-		}
+		if(remote == null) remote = (INotificationCallback) UnicastRemoteObject.exportObject(this, 0);
+		
+		if(subscribe(username, credits, remote)) return "Successfully subscribed for user " + username;
+		
+		UnicastRemoteObject.unexportObject(this, true);
+		return "User not available";
 	}
 
 	@Override
@@ -176,10 +172,18 @@ public class AdminConsole implements IAdminConsole, INotificationCallback, Runna
 	@Override
 	public void notify(String username, int credits) throws RemoteException {
 		try {
-			UnicastRemoteObject.unexportObject(this, true);
 			shell.writeLine("Notification: " + username + " has less than " + credits + " credits.");
 		} catch (IOException e) {
 			e.printStackTrace();
+		}		
+	}
+	
+	public void exit(){
+		try {
+			UnicastRemoteObject.unexportObject(this, true);
+			shell.close();		
+			
+		} catch (NoSuchObjectException e) {
 		}
 		
 	}
