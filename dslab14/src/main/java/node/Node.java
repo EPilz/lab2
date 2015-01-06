@@ -70,7 +70,7 @@ public class Node implements INodeCli, Runnable {
 	private int new_resources;
 	private boolean connectToCloudController = true;
 	
-	private Map<String, String> namesOfLogFiles = new HashMap();
+	private Map<String, String> namesOfLogFiles;
 	
 	private static ThreadLocal<SimpleDateFormat> dateFormater = new ThreadLocal<SimpleDateFormat>() {
 	 
@@ -101,6 +101,7 @@ public class Node implements INodeCli, Runnable {
 		this.rmin = config.getInt("node.rmin");
 		this.nodeResourceStatusList = Collections.synchronizedList(new ArrayList<OtherNodeInfo>());
 		
+		this.namesOfLogFiles = new HashMap<String, String>();
 		this.logDir = System.getProperty("user.dir") + File.separator + config.getString("log.dir") + File.separator;
 		createDir();	
 		
@@ -111,7 +112,6 @@ public class Node implements INodeCli, Runnable {
 			this.secretKey = Keys.readSecretKey(new File(config.getString("hmac.key")));
 		} catch (IOException e) {
 			shell.writeLine("cannot read the secret Key...");
-			e.printStackTrace();
 		}
 
 		try {
@@ -121,7 +121,6 @@ public class Node implements INodeCli, Runnable {
 			shell.writeLine("algorithm for mac is invalid...");
 		} catch (InvalidKeyException e) {
 			shell.writeLine("cannot init mac with the secret Key...");
-			e.printStackTrace();
 		}
 	}
 	
@@ -139,7 +138,7 @@ public class Node implements INodeCli, Runnable {
 		shell.writeLine("Node: " + componentName + " is up!");
 		
 		//Method for Two-Phase Commit
-		twoPhaseCommit();
+		String response = twoPhaseCommit();
         
         if(connectToCloudController) {
         	shell.writeLine("Node: " + componentName + " is online! Enter command.");
@@ -159,9 +158,9 @@ public class Node implements INodeCli, Runnable {
 						
 						socketAlive.send(packet);
 					} catch (UnknownHostException e) {
-						shell.writeLine("Cannot connect to host: " + e.getMessage());
+						shell.writeLine("cannot connect to host");
 					} catch (IOException e) {
-						shell.writeLine(e.getClass().getSimpleName() + ": " + e.getMessage());
+						shell.writeLine("error while communicating with the cloud controller...");
 					} finally {
 						if (socketAlive != null && !socketAlive.isClosed()) {
 							socketAlive.close();
@@ -190,11 +189,12 @@ public class Node implements INodeCli, Runnable {
 				} 
 			}	 
         } else {
-        	shell.writeLine("Node: " + componentName + " cannot connect to CloudController! Enter !exit");
+        	shell.writeLine(response);
+        	shell.writeLine("Enter !exit...");
         }
 	}
 	
-	private void twoPhaseCommit() {
+	private String twoPhaseCommit() {
 		DatagramSocket socketHello = null;
 		ExecutorService poolNodes = null;
 		try {	
@@ -236,8 +236,8 @@ public class Node implements INodeCli, Runnable {
 					try {
 						poolNodes.awaitTermination(1, TimeUnit.SECONDS);
 					} catch (InterruptedException e) {
-						System.out.println("exception await");
 						connectToCloudController = false;
+						return "Node does not respons...";
 					}
 
 					for (OtherNodeInfo otherNodeInfo : nodeResourceStatusList) {					
@@ -246,16 +246,19 @@ public class Node implements INodeCli, Runnable {
 				} else {
 					connectToCloudController = false;
 				}		
-			} else {
-				shell.writeLine("init request has the wrong format");
+			} else {				
 				connectToCloudController = false;
+				return "init request has the wrong format...";
 			}		
 		} catch (UnknownHostException e) {
-			System.out.println("Cannot connect to host: " + e.getMessage());
+			connectToCloudController = false;
+			return "Cannot connect to host...";
 		} catch (SocketException e) {
-			e.printStackTrace();
+			connectToCloudController = false;
+			return "Cannot connect to host...";
 		} catch (IOException e) {
-			System.out.println(e.getClass().getSimpleName() + ": " + e.getMessage());
+			connectToCloudController = false;
+			return "Error while communicating with the nodes...";
 		} finally{
 			if (socketHello != null && !socketHello.isClosed()) {
 				socketHello.close();
@@ -264,6 +267,10 @@ public class Node implements INodeCli, Runnable {
 				poolNodes.shutdown();
 			}
 		}
+		if(! connectToCloudController) {
+			return "Node: " + componentName + " cannot connect to CloudController, because of not enough resources...";
+		} 
+		return "";
 	}
 
 	@Override
@@ -327,13 +334,11 @@ public class Node implements INodeCli, Runnable {
 		public void run() {
 			BufferedReader reader = null;
 			PrintWriter writer = null;
-			
+			String request = "";
 			try {
 				reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));				
 				writer = new PrintWriter(socket.getOutputStream(), true);
-								
-				String request = "";
-
+				
 				while ((request = reader.readLine()) != null) {		
 					if(request.contains("!compute")) {
 						int index = request.indexOf("!compute");
@@ -359,7 +364,6 @@ public class Node implements INodeCli, Runnable {
 							writer.println("!nok");
 						}							
 					} else if(request.startsWith("!commit")) {		
-						System.out.println("commit");
 						int resourceLevel = Integer.parseInt(request.trim().split("\\s+")[1]);
 						
 						if(resourceLevel == new_resources) {
@@ -367,7 +371,6 @@ public class Node implements INodeCli, Runnable {
 							new_resources = -1;
 						}
 					} else if(request.startsWith("!rollback")) {
-						System.out.println("rollback");
 						new_resources = -1;		
 					} else if(request.startsWith("!getLogs")) {
 						shell.writeLine("getLogs command arrived");
@@ -377,9 +380,8 @@ public class Node implements INodeCli, Runnable {
 					}
 				}
 			} catch (IOException e) {
-//				der inputstream wirft immer eine IOException...
-//				System.err.println("Error occurred while communicating with client...");
-//				e.printStackTrace();
+				shell.writeLine("IOOOOOOOOError occurred while communicating with client...");
+				shell.writeLine(request);
 			} catch (NumberFormatException e) {
 				e.printStackTrace();
 			}  finally {
@@ -517,7 +519,7 @@ public class Node implements INodeCli, Runnable {
 					}
 				}					
 			} catch (IOException e) {
-				System.err.println("Error occurred while communicating with the other nodes!");
+				shell.writeLine("Error occurred while communicating with the other nodes!");
 				connectToCloudController = false;
 			} finally {
 				if(reader != null) {

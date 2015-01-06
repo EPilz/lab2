@@ -29,6 +29,7 @@ public class NodeCommunicationThread extends Thread {
 	private int timeToOffline;
 	private int checkPeriod;
 	private int rmax;
+	private MyShell shell;
 	
 
 	public NodeCommunicationThread(CloudController cloudController, DatagramSocket datagramSocket, int timeToOffline, int checkPeriod, int rmax, MyShell shell) {
@@ -37,7 +38,7 @@ public class NodeCommunicationThread extends Thread {
 		this.timeToOffline = timeToOffline;
 		this.checkPeriod = checkPeriod;		
 		this.rmax = rmax;
-		
+		this.shell = shell;
 		this.nodeInfos = new ConcurrentHashMap<>();			
 	}
 	
@@ -116,6 +117,7 @@ public class NodeCommunicationThread extends Thread {
 				}
 			}
 		} catch (IOException e) { 
+			shell.writeLine("error while communicating with the nodes...");
 		} finally {
 			if (datagramSocket != null && !datagramSocket.isClosed()) {
 				datagramSocket.close();
@@ -145,9 +147,9 @@ public class NodeCommunicationThread extends Thread {
 			
 			socket.send(packet);
 		} catch (UnknownHostException e) {
-			System.out.println("Cannot connect to host: " + e.getMessage());
+			shell.writeLine("cannot connect to host");
 		} catch (IOException e) {
-			System.out.println(e.getClass().getSimpleName() + ": " + e.getMessage());
+			shell.writeLine("error while communicating with the nodes...");
 		} finally {
 			if (socket != null && !socket.isClosed()) {
 				socket.close();
