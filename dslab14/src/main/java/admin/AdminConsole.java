@@ -48,7 +48,6 @@ public class AdminConsole implements IAdminConsole, INotificationCallback, Runna
 	private InputStream userRequestStream;
 	private PrintStream userResponseStream;
 	
-	private Socket socket;
 	private Shell shell;
 	
 	private IAdminConsole server;
@@ -85,9 +84,6 @@ public class AdminConsole implements IAdminConsole, INotificationCallback, Runna
 		
 			new Thread(shell).start();	
 			
-			socket = new Socket(config.getString("controller.host"),
-					config.getInt("controller.rmi.port"));
-
 			// obtain registry that was created by the server
 			registry = LocateRegistry.getRegistry(
 					config.getString("controller.host"),
@@ -180,14 +176,16 @@ public class AdminConsole implements IAdminConsole, INotificationCallback, Runna
 	
 	@Command
 	public void exit(){
-		try {
+			System.out.println("1");
+			try {
 			UnicastRemoteObject.unexportObject(this, true);
-			socket.close();
+		} catch (NoSuchObjectException e) { }
+			System.out.println("2");
 			shell.close();		
+			System.out.println("3");
 			Thread.currentThread().interrupt();
-		} catch (NoSuchObjectException e) {
-		} catch (IOException e) {
-		}
+			System.out.println("4");
 		
+		System.out.println("Closed");
 	}
 }
