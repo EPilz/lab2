@@ -15,7 +15,6 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.net.SocketException;
 import java.net.UnknownHostException;
 import java.security.InvalidKeyException;
 import java.security.Key;
@@ -62,13 +61,14 @@ public class Node implements INodeCli, Runnable {
 	private String logDir;
 
 	private ExecutorService pool;
-	private boolean stop = true;
+	private boolean stop = false;
 	
 	private List<OtherNodeInfo> nodeResourceStatusList;
 	private int rmin;
 	private int current_resources;
 	private int new_resources;
 	private boolean connectToCloudController = true;
+	private boolean errorText = false;
 	
 	private Map<String, String> namesOfLogFiles;
 	
@@ -179,7 +179,7 @@ public class Node implements INodeCli, Runnable {
 				throw new RuntimeException("Cannot listen on TCP port.", e);
 			}
 	        
-	        while (stop) {       	
+	        while (! stop) {       	
 				try {
 					pool.execute(new NodeRequestThread(serverSocket.accept()));
 				} catch (IOException e) {
@@ -189,7 +189,9 @@ public class Node implements INodeCli, Runnable {
 				} 
 			}	 
         } else {
-        	shell.writeLine(response);
+        	if(! errorText) {
+        		shell.writeLine(response);
+        	}
         	shell.writeLine("Enter !exit...");
         }
 	}
@@ -199,6 +201,7 @@ public class Node implements INodeCli, Runnable {
 		ExecutorService poolNodes = null;
 		try {	
 			socketHello = new DatagramSocket();
+			socketHello.setSoTimeout(2000);
 			
 			String message = "!hello";
 			byte[] buffer = message.getBytes();
@@ -235,6 +238,7 @@ public class Node implements INodeCli, Runnable {
 					
 					try {
 						poolNodes.awaitTermination(1, TimeUnit.SECONDS);
+						Thread.sleep(1000);
 					} catch (InterruptedException e) {
 						connectToCloudController = false;
 						return "Node does not respons...";
@@ -250,15 +254,9 @@ public class Node implements INodeCli, Runnable {
 				connectToCloudController = false;
 				return "init request has the wrong format...";
 			}		
-		} catch (UnknownHostException e) {
-			connectToCloudController = false;
-			return "Cannot connect to host...";
-		} catch (SocketException e) {
-			connectToCloudController = false;
-			return "Cannot connect to host...";
 		} catch (IOException e) {
 			connectToCloudController = false;
-			return "Error while communicating with the nodes...";
+			return "Error while communicating with the cloud controller...";
 		} finally{
 			if (socketHello != null && !socketHello.isClosed()) {
 				socketHello.close();
@@ -276,7 +274,7 @@ public class Node implements INodeCli, Runnable {
 	@Override
 	@Command
 	public String exit() throws IOException {
-		stop = false;
+		stop = true;
 	
 		if (pool != null) {
 			pool.shutdown();
@@ -287,6 +285,7 @@ public class Node implements INodeCli, Runnable {
 				serverSocket.close();
 			} catch (IOException e) {  }
 		}
+		
 		if(timerIsAlive != null) {
 			timerIsAlive.cancel();
 		}
@@ -362,7 +361,7 @@ public class Node implements INodeCli, Runnable {
 							writer.println("!ok");
 						} else {
 							writer.println("!nok");
-						}							
+						}						
 					} else if(request.startsWith("!commit")) {		
 						int resourceLevel = Integer.parseInt(request.trim().split("\\s+")[1]);
 						
@@ -379,12 +378,9 @@ public class Node implements INodeCli, Runnable {
 						writer.println("not valid command");
 					}
 				}
-			} catch (IOException e) {
-				shell.writeLine("IOOOOOOOOError occurred while communicating with client...");
-				shell.writeLine(request);
-			} catch (NumberFormatException e) {
-				e.printStackTrace();
-			}  finally {
+			} catch (IOException | NumberFormatException e) {
+				//cannot handle
+			}   finally {
 				if(reader != null) {
 					try {
 						reader.close();
@@ -497,10 +493,11 @@ public class Node implements INodeCli, Runnable {
 			PrintWriter writer = null;
 			try {
 				socket = new Socket(otherNodeInfo.getInetAddress(), otherNodeInfo.getPort());
+				socket.setSoTimeout(1000);
 				
 				reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));				
 				writer = new PrintWriter(socket.getOutputStream(), true);
-				
+
 				if(sendShareCommand) {
 					writer.println("!share " + resourceLevel);
 					String request = reader.readLine();		
@@ -521,6 +518,7 @@ public class Node implements INodeCli, Runnable {
 			} catch (IOException e) {
 				shell.writeLine("Error occurred while communicating with the other nodes!");
 				connectToCloudController = false;
+				errorText = true;
 			} finally {
 				if(reader != null) {
 					try {
