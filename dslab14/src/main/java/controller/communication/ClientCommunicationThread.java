@@ -53,7 +53,7 @@ public class ClientCommunicationThread extends Thread {
 	
 	private Map<String, ClientInfo> clientInfos;
 	private CopyOnWriteArrayList<Channel> activeChannels;
-	private LinkedHashMap<Character, Long> usageOfOperators = new LinkedHashMap<>();
+	private ConcurrentHashMap<Character, Long> usageOfOperators = new ConcurrentHashMap<>();
 
 	private boolean isShutdown;
 	
@@ -411,7 +411,8 @@ public class ClientCommunicationThread extends Thread {
 	}
 
 	public LinkedHashMap<Character, Long> getUsageOfOperators() {
-		return usageOfOperators;
+		LinkedHashMap<Character, Long> help = new LinkedHashMap<Character, Long>(usageOfOperators);
+		return help;
 	}
 }
 

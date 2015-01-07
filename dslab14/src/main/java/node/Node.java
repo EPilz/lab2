@@ -372,7 +372,6 @@ public class Node implements INodeCli, Runnable {
 					} else if(request.startsWith("!rollback")) {
 						new_resources = -1;		
 					} else if(request.startsWith("!getLogs")) {
-						shell.writeLine("getLogs command arrived");
 						sendLogsToCloudController();						
 					} else {	
 						writer.println("not valid command");

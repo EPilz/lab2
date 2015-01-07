@@ -15,6 +15,7 @@ import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.Serializable;
 import java.net.Socket;
+import java.rmi.ConnectException;
 import java.rmi.NoSuchObjectException;
 import java.rmi.NotBoundException;
 import java.rmi.RemoteException;
@@ -93,12 +94,14 @@ public class AdminConsole implements IAdminConsole, INotificationCallback, Runna
 			// retrieve the remote reference of the admin service
 			server = (IAdminConsole) registry.lookup(config
 					.getString("binding.name"));
+		} catch (ConnectException e) {
+			ccIsOfflineMessage();
 		} catch (RemoteException e) {
 			e.printStackTrace();
 		} catch (NotBoundException e) {
 			e.printStackTrace();
 		} catch (IOException e) {
-			e.printStackTrace();
+			
 		}
 		
 	}
@@ -111,35 +114,52 @@ public class AdminConsole implements IAdminConsole, INotificationCallback, Runna
 	
 	@Command
 	public String subscribe(String username, int credits) throws RemoteException {
-		if(remote == null) remote = (INotificationCallback) UnicastRemoteObject.exportObject(this, 0);
-		
-		if(subscribe(username, credits, remote)) return "Successfully subscribed for user " + username;
-		
-		UnicastRemoteObject.unexportObject(this, true);
-		return "User not available";
+		if(server != null){
+			try {
+				if(remote == null) remote = (INotificationCallback) UnicastRemoteObject.exportObject(this, 0);
+				if(subscribe(username, credits, remote)) return "Successfully subscribed for user " + username;
+				
+				UnicastRemoteObject.unexportObject(this, true);
+				return "User not available";
+			} catch (ConnectException e) {}
+		}
+		ccIsOfflineMessage();
+		return null;
 	}
 
 	@Override
 	@Command
 	public List<ComputationRequestInfo> getLogs() throws RemoteException {
-		return server.getLogs();
+		if(server != null){
+			try {
+				return server.getLogs();
+			} catch (ConnectException e) {}
+		}
+		ccIsOfflineMessage();
+		return null;
 	}
-
+	
 	@Override
 	@Command
 	public LinkedHashMap<Character, Long> statistics() throws RemoteException {
-		LinkedHashMap<Character, Long> map = server.statistics();
-		List<Map.Entry<Character, Long>> entries = new ArrayList<Map.Entry<Character,Long>>(map.entrySet());
-		Collections.sort(entries, new Comparator<Map.Entry<Character, Long>>() {
-			public int compare(Map.Entry<Character, Long> a, Map.Entry<Character, Long> b){
-				return b.getValue().compareTo(a.getValue());
-			}
-		});
-		LinkedHashMap<Character, Long> sortedMap = new LinkedHashMap<Character, Long>();
-		for (Map.Entry<Character, Long> entry : entries) {
-			sortedMap.put(entry.getKey(), entry.getValue());
-		}
-		return sortedMap;
+		if(server != null){
+			try {
+				LinkedHashMap<Character, Long> map = server.statistics();
+				List<Map.Entry<Character, Long>> entries = new ArrayList<Map.Entry<Character,Long>>(map.entrySet());
+				Collections.sort(entries, new Comparator<Map.Entry<Character, Long>>() {
+					public int compare(Map.Entry<Character, Long> a, Map.Entry<Character, Long> b){
+						return b.getValue().compareTo(a.getValue());
+					}
+				});
+				LinkedHashMap<Character, Long> sortedMap = new LinkedHashMap<Character, Long>();
+				for (Map.Entry<Character, Long> entry : entries) {
+					sortedMap.put(entry.getKey(), entry.getValue());
+				}
+				return sortedMap;
+			} catch (ConnectException e) {}
+		} 
+		ccIsOfflineMessage();
+		return null;
 	}
 	
 	//IGNORE
@@ -176,12 +196,19 @@ public class AdminConsole implements IAdminConsole, INotificationCallback, Runna
 	
 	@Command
 	public String exit(){
-			try {
+		try {
 			UnicastRemoteObject.unexportObject(this, true);
 		} catch (NoSuchObjectException e) { }
 			shell.close();		
 			Thread.currentThread().interrupt();
 		
 		return "Shut down completed! Bye ..";
+	}
+	
+	private void ccIsOfflineMessage(){
+		try {
+			shell.writeLine("Error: Connection to CloudController lost. Please exit with command !exit");
+		} catch (IOException e) {
+		}
 	}
 }

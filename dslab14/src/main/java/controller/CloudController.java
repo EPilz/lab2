@@ -13,6 +13,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.UnknownHostException;
 import java.rmi.AlreadyBoundException;
+import java.rmi.ConnectException;
 import java.rmi.NotBoundException;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
@@ -260,9 +261,11 @@ public class CloudController implements ICloudControllerCli, IAdminConsole, Runn
 				try {
 					callback.notify(username, limit);
 					subscribedUsersLimits.remove(username);
+				} catch (ConnectException e) {
+					
 				} catch (RemoteException e) {
 					e.printStackTrace();
-				}
+				} 
 			}
 		}
 	}
