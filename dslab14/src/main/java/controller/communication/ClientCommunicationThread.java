@@ -187,7 +187,13 @@ public class ClientCommunicationThread extends Thread {
 				return "You have to login first!";
 			}
 						
-			clientInfos.get(loggedInUser).setStatus(ClientInfo.Status.OFFLINE);		
+			ClientInfo info = clientInfos.get(loggedInUser);
+			synchronized(info)
+			{
+				info.setCurrentLogins(info.getCurrentLogins() - 1);
+				if(info.getCurrentLogins() == 0)
+					info.setStatus(ClientInfo.Status.OFFLINE);
+			}
 			loggedInUser = null;
 			
 			return "Successfully logged out!";		
@@ -374,7 +380,13 @@ public class ClientCommunicationThread extends Thread {
 				else //Login user
 				{
 					loggedInUser = username;
-					clientInfos.get(loggedInUser).setStatus(ClientInfo.Status.ONLINE);
+					ClientInfo info = clientInfos.get(loggedInUser);
+					synchronized(info)
+					{
+						info.setStatus(ClientInfo.Status.ONLINE);
+						info.setCurrentLogins(info.getCurrentLogins() + 1);
+					}
+					
 				}
 			} catch (Exception e) {
 				channel.close();

@@ -19,6 +19,7 @@ public class ClientInfo {
 
 	private String name;
 	private Status status;
+	private int currentLogins;
 	private long credits;
 		
 	public ClientInfo(String name, Status status, long credits) {
@@ -26,6 +27,7 @@ public class ClientInfo {
 		this.name = name;
 		this.status = status;
 		this.credits = credits;
+		currentLogins = 0;
 	}
 	
 	public String getName() {
@@ -60,4 +62,11 @@ public class ClientInfo {
 		this.credits -= credits;
 	}
 
+	public int getCurrentLogins() {
+		return currentLogins;
+	}
+
+	public void setCurrentLogins(int currentLogins) {
+		this.currentLogins = currentLogins;
+	}
 }
