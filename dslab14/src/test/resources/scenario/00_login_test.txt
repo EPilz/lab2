@@ -2,11 +2,9 @@
 *	Client			alice
 *	Node			node1
 
-alice:		!credits
->			verify("500", T(test.util.Flag).NOT)
 
-alice:		!login alice 12345
->			verify("success")
+alice:		!authenticate alice
+>			verify("is started")
 
 alice:		!credits
 >			verify("500")
